@@ -62,7 +62,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Command:\n"
         "/scan = scan saham"
     )
+async def arahunter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    text = """
+🔥 ARA HUNTER — IHSG Screener
+
+Rules:
+✅ Price > MA5
+✅ Price > 1.05 x Previous Price
+✅ Price > Open Price
+✅ Volume > 0.2 x Previous Volume
+✅ Value > 5B
+
+Scanning saham IHSG...
+"""
+
+    await update.message.reply_text(text)
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Scanning IHSG...")
 
