@@ -2,292 +2,141 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from bot.utils.constants import IDX_STOCKS, ALL_IDX_STOCKS, SCREENER_NAMES
-from bot.utils.formatters import fmt_price, fmt_volume, fmt_value, fmt_pct, fmt_score, score_emoji, broker_signal_emoji
-from bot.data.watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist
+from bot.utils.formatters import (
+    fmt_price, fmt_volume, fmt_value, fmt_pct,
+    fmt_score, score_emoji, broker_signal_emoji,
+)
+from bot.utils.helpers import safe_edit, safe_send_photo
+from bot.data.watchlist import add_to_watchlist, get_watchlist
 from bot.services.data_service import get_market_snapshot, get_ihsg_data
 
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Central dispatcher
+# ─────────────────────────────────────────────────────────────────────────────
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
+    data  = query.data or ""
 
-    # ── Main menu ──────────────────────────────────────────────
-    if data == "menu_main":
-        from bot.handlers.command_handlers import MAIN_MENU_KB
-        ihsg = get_ihsg_data()
-        price = ihsg.get("price", 0)
-        pct = ihsg.get("pct_chg", 0)
-        sign = "+" if pct >= 0 else ""
-        emoji = "🟢" if pct >= 0 else "🔴"
-        await query.edit_message_text(
-            f"🇮🇩 *IDX Stock Screener Bot*\n\n"
-            f"*IHSG:* {price:,.2f} {emoji} {sign}{pct:.2f}%\n\n"
-            f"Choose from the menu below:",
-            parse_mode="Markdown",
-            reply_markup=MAIN_MENU_KB,
-        )
+    try:
+        if data == "menu_main":
+            await _cb_main_menu(query)
 
-    # ── Screener menu ──────────────────────────────────────────
-    elif data == "menu_screener":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎯 ARA Hunter", callback_data="screen_ara_hunter")],
-            [InlineKeyboardButton("📈 BSJP", callback_data="screen_bsjp")],
-            [InlineKeyboardButton("🏦 Big Accumulation", callback_data="screen_big_accumulation")],
-            [InlineKeyboardButton("🔙 Back", callback_data="menu_main")],
-        ])
-        await query.edit_message_text(
-            "📈 *Stock Screener*\n\nChoose a screener:\n\n"
-            "🎯 *ARA Hunter* — Stocks nearing ARA with strong volume\n"
-            "📈 *BSJP* — Breakout with foreign buy streak\n"
-            "🏦 *Big Accumulation* — Bandar loading positions",
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
+        elif data == "menu_screener":
+            await _cb_screener_menu(query)
 
-    # ── Run screener ──────────────────────────────────────────
-    elif data.startswith("screen_"):
-        screener_type = data.replace("screen_", "")
-        name = SCREENER_NAMES.get(screener_type, screener_type.upper())
-        await query.edit_message_text(f"⏳ Running *{name}* screener...", parse_mode="Markdown")
-        await _run_screener_cb(query, context, screener_type, name)
+        elif data.startswith("screen_detail_"):
+            # screen_detail_{screener_type}_{ticker}
+            parts = data.split("_", 3)
+            if len(parts) == 4:
+                await _cb_screener_detail(query, parts[2], parts[3])
 
-    # ── Chart ──────────────────────────────────────────────────
-    elif data.startswith("chart_"):
-        ticker = data.replace("chart_", "")
-        await query.edit_message_text(f"⏳ Loading chart for *{ticker}*...", parse_mode="Markdown")
-        from bot.charts.chart_generator import generate_stock_chart
-        from bot.bandarmology.broker_analyzer import estimate_broker_signal
-        from bot.services.data_service import get_stock_data, compute_indicators
+        elif data.startswith("screen_"):
+            screener_type = data.replace("screen_", "", 1)
+            name = SCREENER_NAMES.get(screener_type, screener_type.upper())
+            await safe_edit(query, f"⏳ Running *{name}* screener…")
+            await _cb_run_screener(query, screener_type, name)
 
-        df = get_stock_data(ticker, period="3mo")
-        if df is None or len(df) < 5:
-            await query.edit_message_text(f"❌ No data for *{ticker}*.", parse_mode="Markdown")
-            return
+        elif data.startswith("chart_"):
+            ticker = data.replace("chart_", "", 1)
+            await safe_edit(query, f"⏳ Loading chart for *{ticker}*…")
+            await _cb_chart(query, ticker)
 
-        df = compute_indicators(df)
-        latest = df.iloc[-1]
-        prev = df.iloc[-2] if len(df) > 1 else latest
-        price = latest["Close"]
-        prev_price = prev["Close"]
-        pct_chg = (price - prev_price) / prev_price * 100
-        rsi = latest.get("RSI", 50) or 50
-        rel_vol = latest.get("RelVol", 1) or 1
-        volume = latest["Volume"]
-        value = price * volume
-        snap = {"ticker": ticker, "price": price, "prev_price": prev_price,
-                "pct_chg": pct_chg, "volume": volume, "value": value,
-                "rel_vol": rel_vol, "bandar_score": latest.get("BandarScore", 0),
-                "ma20": latest.get("MA20"), "ma50": latest.get("MA50")}
-        broker = estimate_broker_signal(snap)
-        sign = "+" if pct_chg >= 0 else ""
+        elif data.startswith("broker_"):
+            ticker = data.replace("broker_", "", 1)
+            await safe_edit(query, f"⏳ Analyzing broker flow for *{ticker}*…")
+            await _cb_broker(query, ticker)
 
-        caption = (
-            f"📊 *{ticker}*\n"
-            f"Price: *{fmt_price(price)}* ({sign}{pct_chg:.2f}%)\n"
-            f"Vol: {fmt_volume(volume)} ({rel_vol:.1f}x) | RSI: {rsi:.1f}\n"
-            f"Broker: {broker['bandar_label']}"
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏦 Broker Flow", callback_data=f"broker_{ticker}"),
-             InlineKeyboardButton("⭐ Watchlist", callback_data=f"watch_add_{ticker}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="menu_main")],
-        ])
+        elif data == "menu_heatmap" or data.startswith("heatmap_"):
+            sector = None if data == "menu_heatmap" else data.replace("heatmap_", "", 1)
+            if sector == "all":
+                sector = None
+            await safe_edit(query, "⏳ Generating heatmap…")
+            await _cb_heatmap(query, sector)
 
-        buf = generate_stock_chart(ticker)
-        if buf:
-            await query.message.reply_photo(photo=buf, caption=caption, parse_mode="Markdown", reply_markup=kb)
-            await query.delete_message()
-        else:
-            await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=kb)
+        elif data == "menu_sector":
+            await safe_edit(query, "⏳ Analyzing sectors…")
+            await _cb_sector(query)
 
-    # ── Broker flow ────────────────────────────────────────────
-    elif data.startswith("broker_"):
-        ticker = data.replace("broker_", "")
-        from bot.bandarmology.broker_analyzer import estimate_broker_signal, format_broker_report
-        snaps = get_market_snapshot([ticker])
-        if not snaps:
-            await query.edit_message_text(f"❌ No data for *{ticker}*.", parse_mode="Markdown")
-            return
-        broker_data = estimate_broker_signal(snaps[0])
-        report = format_broker_report(ticker, broker_data)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Chart", callback_data=f"chart_{ticker}"),
-             InlineKeyboardButton("⭐ Watchlist", callback_data=f"watch_add_{ticker}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="menu_main")],
-        ])
-        await query.edit_message_text(report, parse_mode="Markdown", reply_markup=kb)
+        elif data == "menu_momentum":
+            await safe_edit(query, "⏳ Scanning momentum…")
+            await _cb_momentum(query)
 
-    # ── Heatmap ────────────────────────────────────────────────
-    elif data == "menu_heatmap" or data.startswith("heatmap_"):
-        sector = None if data == "menu_heatmap" else data.replace("heatmap_", "")
-        if sector == "all":
-            sector = None
-        await query.edit_message_text("⏳ Generating heatmap...")
-        from bot.heatmap.heatmap_generator import generate_heatmap
-        buf = generate_heatmap(sector)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🏦 Banking", callback_data="heatmap_Banking"),
-             InlineKeyboardButton("💻 Technology", callback_data="heatmap_Technology")],
-            [InlineKeyboardButton("⚡ Energy", callback_data="heatmap_Energy"),
-             InlineKeyboardButton("🛒 Consumer", callback_data="heatmap_Consumer")],
-            [InlineKeyboardButton("🏥 Healthcare", callback_data="heatmap_Healthcare"),
-             InlineKeyboardButton("🏠 Property", callback_data="heatmap_Property")],
-            [InlineKeyboardButton("🏭 Industrial", callback_data="heatmap_Industrial"),
-             InlineKeyboardButton("🌴 Plantation", callback_data="heatmap_Plantation")],
-            [InlineKeyboardButton("🔄 All Sectors", callback_data="heatmap_all"),
-             InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ])
-        label = sector if sector else "All Sectors"
-        if buf:
-            await query.message.reply_photo(
-                photo=buf, caption=f"🔥 *IDX Heatmap — {label}*",
-                parse_mode="Markdown", reply_markup=kb,
-            )
-            await query.delete_message()
-        else:
-            await query.edit_message_text("❌ Heatmap unavailable. Try again.", reply_markup=kb)
+        elif data == "menu_breadth":
+            await safe_edit(query, "⏳ Analyzing breadth…")
+            await _cb_breadth(query)
 
-    # ── Sector rotation ────────────────────────────────────────
-    elif data == "menu_sector":
-        await query.edit_message_text("⏳ Analyzing sectors...")
-        from bot.sector_rotation.sector_analyzer import analyze_sectors, format_sector_rotation
-        result = analyze_sectors()
-        text = format_sector_rotation(result)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔥 Heatmap", callback_data="menu_heatmap"),
-             InlineKeyboardButton("🔄 Refresh", callback_data="menu_sector")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        elif data == "menu_foreign":
+            await safe_edit(query, "⏳ Scanning foreign flow…")
+            await _cb_foreign(query)
 
-    # ── Momentum ───────────────────────────────────────────────
-    elif data == "menu_momentum":
-        await query.edit_message_text("⏳ Scanning top momentum stocks...")
-        snaps = get_market_snapshot(ALL_IDX_STOCKS[:40])
-        snaps.sort(key=lambda x: x.get("pct_chg", 0), reverse=True)
-        top = snaps[:10]
-        lines = ["⚡ *Top Momentum Stocks*\n"]
-        for i, s in enumerate(top, 1):
-            t = s.get("ticker", "")
-            pct = s.get("pct_chg", 0)
-            rv = s.get("rel_vol", 1) or 1
-            sign = "+" if pct >= 0 else ""
-            lines.append(f"{i}. *{t}* {sign}{pct:.2f}% | Vol: {rv:.1f}x | {fmt_price(s.get('price'))}")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="menu_momentum"),
-             InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+        elif data == "menu_bandar":
+            await _cb_bandar_menu(query)
 
-    # ── Market breadth ─────────────────────────────────────────
-    elif data == "menu_breadth":
-        await query.edit_message_text("⏳ Analyzing market breadth...")
-        snaps = get_market_snapshot(ALL_IDX_STOCKS[:60])
-        ihsg = get_ihsg_data()
-        advance = sum(1 for s in snaps if s.get("pct_chg", 0) > 0)
-        decline = sum(1 for s in snaps if s.get("pct_chg", 0) < 0)
-        total = len(snaps)
-        ratio = advance / max(decline, 1)
-        condition = "🟢 Bullish" if ratio > 1.5 else "🔴 Bearish" if ratio < 0.7 else "🟡 Mixed"
-        ihsg_pct = ihsg.get("pct_chg", 0)
-        ihsg_price = ihsg.get("price", 0)
-        sign = "+" if ihsg_pct >= 0 else ""
-        text = (
-            f"📉 *Market Breadth*\n\n"
-            f"*IHSG:* {ihsg_price:,.2f} ({sign}{ihsg_pct:.2f}%)\n"
-            f"*Condition:* {condition}\n\n"
-            f"🟢 Advance: {advance} | 🔴 Decline: {decline}\n"
-            f"A/D Ratio: {ratio:.2f}\n\n"
-            f"Overbought (RSI>70): {sum(1 for s in snaps if (s.get('rsi') or 0)>70)}\n"
-            f"Oversold (RSI<30): {sum(1 for s in snaps if (s.get('rsi') or 50)<30)}"
-        )
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="menu_breadth"),
-             InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        elif data == "menu_watchlist":
+            await _cb_watchlist(query, update.effective_user.id)
 
-    # ── Foreign flow ───────────────────────────────────────────
-    elif data == "menu_foreign":
-        await query.edit_message_text("⏳ Scanning foreign flow...")
-        snaps = get_market_snapshot(ALL_IDX_STOCKS[:40])
-        buys = sorted([s for s in snaps if s.get("pct_chg", 0) > 0.5 and (s.get("rel_vol") or 1) > 1.5],
-                      key=lambda x: x.get("pct_chg", 0), reverse=True)[:7]
-        sells = [s for s in snaps if s.get("pct_chg", 0) < -0.5 and (s.get("rel_vol") or 1) > 1.5][:4]
-        lines = ["💰 *Foreign Flow Tracker*\n", "*Estimated Net Foreign Buy:*\n"]
-        for s in buys:
-            lines.append(f"  🟢 *{s['ticker']}* +{s['pct_chg']:.2f}% | {(s.get('rel_vol') or 1):.1f}x vol")
-        lines.append("\n*Estimated Net Foreign Sell:*\n")
-        for s in sells:
-            lines.append(f"  🔴 *{s['ticker']}* {s['pct_chg']:.2f}%")
-        lines.append("\n⚠️ _Estimates only. Actual data requires paid IDX provider._")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="menu_foreign"),
-             InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-        ])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+        elif data.startswith("watch_add_"):
+            ticker = data.replace("watch_add_", "", 1)
+            added  = add_to_watchlist(update.effective_user.id, ticker)
+            msg    = f"✅ {ticker} added!" if added else f"⚠️ {ticker} already in watchlist."
+            await query.answer(msg, show_alert=True)
 
-    # ── Watchlist ──────────────────────────────────────────────
-    elif data == "menu_watchlist":
-        user_id = update.effective_user.id
-        wl = get_watchlist(user_id)
-        if not wl:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📈 Screener", callback_data="menu_screener")],
-                [InlineKeyboardButton("🔙 Menu", callback_data="menu_main")],
-            ])
-            await query.edit_message_text(
-                "📊 *Watchlist empty.*\n\nUse `/add TICKER` to add stocks.",
-                parse_mode="Markdown", reply_markup=kb,
-            )
-            return
-        snaps = get_market_snapshot(wl)
-        snap_map = {s["ticker"]: s for s in snaps}
-        lines = ["📊 *Your Watchlist*\n"]
-        buttons = []
-        for ticker in wl:
-            s = snap_map.get(ticker, {})
-            price = s.get("price", 0)
-            pct = s.get("pct_chg", 0)
-            sign = "+" if pct >= 0 else ""
-            e = "🟢" if pct >= 0 else "🔴"
-            lines.append(f"{e} *{ticker}* {fmt_price(price)} ({sign}{pct:.2f}%)")
-            buttons.append(InlineKeyboardButton(f"📊 {ticker}", callback_data=f"chart_{ticker}"))
-        rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
-        rows.append([InlineKeyboardButton("🔄 Refresh", callback_data="menu_watchlist"),
-                     InlineKeyboardButton("🔙 Menu", callback_data="menu_main")])
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+        elif data == "menu_settings":
+            await _cb_settings(query)
 
-    # ── Watch add ──────────────────────────────────────────────
-    elif data.startswith("watch_add_"):
-        ticker = data.replace("watch_add_", "")
-        user_id = update.effective_user.id
-        added = add_to_watchlist(user_id, ticker)
-        msg = f"✅ *{ticker}* added to watchlist!" if added else f"⚠️ *{ticker}* already in watchlist."
-        await query.answer(msg.replace("*", ""), show_alert=True)
-
-    # ── Settings ───────────────────────────────────────────────
-    elif data == "menu_settings":
-        text = (
-            "⚙️ *Settings*\n\n"
-            "*Bot Configuration:*\n"
-            "• Data source: Yahoo Finance (IDX .JK)\n"
-            "• Chart style: Dark theme\n"
-            "• Screener refresh: On demand\n"
-            "• Watchlist alerts: Auto\n\n"
-            "*Data Note:*\n"
-            "Real-time IDX broker flow requires a paid data provider (e.g., Stockbit, RTI Business).\n"
-            "Current broker analysis is estimated from price/volume patterns.\n\n"
-            "*Focus Brokers:* AK, BK, YP, CC, PD, XL"
-        )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="menu_main")]])
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Callback error [{data}]: {e}", exc_info=True)
+        try:
+            await safe_edit(query, "❌ Something went wrong. Please try again.")
+        except Exception:
+            pass
 
 
-async def _run_screener_cb(query, context, screener_type: str, name: str):
+# ─────────────────────────────────────────────────────────────────────────────
+#  Individual callback handlers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _cb_main_menu(query):
+    from bot.handlers.command_handlers import MAIN_MENU_KB
+    ihsg  = get_ihsg_data()
+    price = ihsg.get("price", 0)
+    pct   = ihsg.get("pct_chg", 0)
+    sign  = "+" if pct >= 0 else ""
+    emoji = "🟢" if pct >= 0 else "🔴"
+    await safe_edit(
+        query,
+        f"🇮🇩 *IDX Stock Screener Bot*\n\n"
+        f"*IHSG:* {price:,.2f} {emoji} {sign}{pct:.2f}%\n\n"
+        f"Choose from the menu below:",
+        reply_markup=MAIN_MENU_KB,
+    )
+
+
+async def _cb_screener_menu(query):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎯 ARA Hunter",        callback_data="screen_ara_hunter")],
+        [InlineKeyboardButton("📈 BSJP",              callback_data="screen_bsjp")],
+        [InlineKeyboardButton("🏦 Big Accumulation",  callback_data="screen_big_accumulation")],
+        [InlineKeyboardButton("⚡ Scalper Pro",       callback_data="screen_scalper_pro")],
+        [InlineKeyboardButton("🏠 Main Menu",         callback_data="menu_main")],
+    ])
+    await safe_edit(
+        query,
+        "📈 *Stock Screener*\n\nChoose a screener:\n\n"
+        "🎯 *ARA Hunter* — Near-ARA stocks\n"
+        "📈 *BSJP* — Breakout + foreign buy streak\n"
+        "🏦 *Big Accumulation* — Smart money loading\n"
+        "⚡ *Scalper Pro* — Intraday scalp setups",
+        reply_markup=kb,
+    )
+
+
+async def _cb_run_screener(query, screener_type: str, name: str):
     from bot.screener.screener_engine import run_screener
 
     results = run_screener(screener_type, max_results=8)
@@ -295,105 +144,95 @@ async def _run_screener_cb(query, context, screener_type: str, name: str):
     if not results:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Try Again", callback_data=f"screen_{screener_type}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="menu_screener")],
+            [InlineKeyboardButton("🏠 Back",      callback_data="menu_screener")],
         ])
-        await query.edit_message_text(
-            f"📭 *{name} Screener*\n\nNo stocks matched the filter criteria today.\n"
-            "Try again during market hours (09:00–16:00 WIB).",
-            parse_mode="Markdown",
+        await safe_edit(
+            query,
+            f"📭 *{name}*\n\n"
+            "No stocks matched today.\n"
+            "Try during market hours: 09:00–16:00 WIB.",
             reply_markup=kb,
         )
         return
 
-    # Send summary text
-    lines = [f"📈 *{name} Screener Results*\n", f"Found *{len(results)}* stocks:\n"]
+    lines = [f"📈 *{name}*\n", f"Found *{len(results)}* stocks:\n"]
     for i, s in enumerate(results[:8], 1):
-        ticker = s.get("ticker", "")
-        price = s.get("price", 0)
-        pct = s.get("pct_chg", 0)
-        mom = s.get("momentum_score", 50)
-        sector = s.get("sector", "")
-        broker = s.get("broker_signal", "Neutral")
-        sign = "+" if pct >= 0 else ""
-        e = score_emoji(mom)
+        ticker  = s.get("ticker", "")
+        pct     = s.get("pct_chg", 0)
+        mom     = s.get("momentum_score", 50)
+        sector  = s.get("sector", "")
+        broker  = s.get("broker_signal", "Neutral")
+        sign    = "+" if pct >= 0 else ""
+        e       = score_emoji(mom)
         lines.append(
-            f"{i}. *{ticker}* {fmt_price(price)} {sign}{pct:.2f}%\n"
-            f"   {e} Score: {mom:.0f} | {sector} | {broker}"
+            f"{i}. *{ticker}* {fmt_price(s.get('price'))} {sign}{pct:.2f}%\n"
+            f"   {e} Score:{mom:.0f} | {sector} | {broker}"
         )
 
-    # Detail buttons for top 5
-    detail_buttons = []
-    for s in results[:5]:
-        ticker = s["ticker"]
-        detail_buttons.append(InlineKeyboardButton(f"📊 {ticker}", callback_data=f"screen_detail_{screener_type}_{ticker}"))
+    detail_btns = [
+        InlineKeyboardButton(f"📊 {s['ticker']}", callback_data=f"screen_detail_{screener_type}_{s['ticker']}")
+        for s in results[:5]
+    ]
+    rows = [detail_btns[i:i+3] for i in range(0, len(detail_btns), 3)]
+    rows.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"screen_{screener_type}"),
+        InlineKeyboardButton("🏠 Back",    callback_data="menu_screener"),
+    ])
 
-    rows = [detail_buttons[i:i+3] for i in range(0, len(detail_buttons), 3)]
-    rows.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"screen_{screener_type}"),
-                 InlineKeyboardButton("🔙 Back", callback_data="menu_screener")])
+    await safe_edit(query, "\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
 
-    await query.edit_message_text(
-        "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows)
-    )
-
-    # Send chart for top result
-    if results:
-        top = results[0]
-        ticker = top["ticker"]
-        try:
-            from bot.charts.chart_generator import generate_mini_chart
-            buf = generate_mini_chart(ticker)
-            ai = top.get("ai_analysis", "")
-            if buf:
-                await query.message.reply_photo(
-                    photo=buf,
-                    caption=f"🥇 *{ticker}* — Top Pick\n\n{ai[:600]}",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📊 Full Chart", callback_data=f"chart_{ticker}"),
-                         InlineKeyboardButton("🏦 Broker", callback_data=f"broker_{ticker}")],
-                        [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}")],
-                    ]),
-                )
-        except Exception as e:
-            logger.warning(f"Mini chart send error: {e}")
+    # Send mini chart for top pick
+    top = results[0]
+    ticker = top["ticker"]
+    try:
+        from bot.charts.chart_generator import generate_mini_chart
+        buf = generate_mini_chart(ticker)
+        ai  = top.get("ai_analysis", "")
+        if buf:
+            kb2 = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Full Chart",  callback_data=f"chart_{ticker}"),
+                 InlineKeyboardButton("🏦 Broker",      callback_data=f"broker_{ticker}")],
+                [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}"),
+                 InlineKeyboardButton("🏠 Menu",        callback_data="menu_main")],
+            ])
+            await query.message.reply_photo(
+                photo=buf,
+                caption=f"🥇 *Top Pick: {ticker}*\n\n{ai[:900]}",
+                parse_mode="Markdown",
+                reply_markup=kb2,
+            )
+    except Exception as e:
+        logger.warning(f"Top pick chart error: {e}")
 
 
-async def handle_screener_detail(query, screener_type: str, ticker: str):
-    from bot.screener.screener_engine import run_screener
-    from bot.charts.chart_generator import generate_mini_chart
-    from bot.bandarmology.broker_analyzer import format_broker_report, estimate_broker_signal
+async def _cb_screener_detail(query, screener_type: str, ticker: str):
     from bot.services.data_service import get_market_snapshot
+    from bot.bandarmology.broker_analyzer import estimate_broker_signal, format_broker_report
+    from bot.services.ai_service import generate_full_analysis
 
     snaps = get_market_snapshot([ticker])
     if not snaps:
-        await query.edit_message_text(f"❌ No data for *{ticker}*.", parse_mode="Markdown")
+        await safe_edit(query, f"❌ No data for *{ticker}*.")
         return
 
-    stock = snaps[0]
+    stock       = snaps[0]
     broker_data = estimate_broker_signal(stock)
+    sector      = next((s for s, t in IDX_STOCKS.items() if ticker in t), "Other")
+    pct         = stock.get("pct_chg", 0)
+    rel_vol     = stock.get("rel_vol", 1) or 1
+    mom         = min(100, max(0, 50 + pct * 4 + (rel_vol - 1) * 8))
 
-    from bot.services.ai_service import generate_full_analysis
-    from bot.sector_rotation.sector_analyzer import analyze_sectors
-
-    sector = next((s for s, ts in IDX_STOCKS.items() if ticker in ts), "Other")
-    stock["sector"] = sector
-    stock["broker_signal"] = broker_data["signal"]
-    stock["foreign_flow"] = "Positive" if stock.get("pct_chg", 0) > 1 else "Neutral"
-
-    # Momentum score inline
-    pct = stock.get("pct_chg", 0)
-    rel_vol = stock.get("rel_vol", 1) or 1
-    mom = min(100, max(0, 50 + pct * 4 + (rel_vol - 1) * 8))
+    stock["sector"]         = sector
+    stock["broker_signal"]  = broker_data["signal"]
+    stock["foreign_flow"]   = "Positive" if pct > 1 else "Neutral"
     stock["momentum_score"] = mom
 
-    ai = generate_full_analysis(stock, screener_type)
-
-    price = stock.get("price", 0)
+    ai   = generate_full_analysis(stock, screener_type)
     sign = "+" if pct >= 0 else ""
 
     text = (
         f"📌 *{ticker}* — {sector}\n"
-        f"Price: *{fmt_price(price)}* ({sign}{pct:.2f}%)\n"
+        f"Price: *{fmt_price(stock.get('price'))}* ({sign}{pct:.2f}%)\n"
         f"Volume: {fmt_volume(stock.get('volume',0))} ({rel_vol:.1f}x)\n"
         f"Value: {fmt_value(stock.get('value',0))}\n"
         f"Broker: {broker_signal_emoji(broker_data['signal'])} {broker_data['bandar_label']}\n\n"
@@ -401,10 +240,279 @@ async def handle_screener_detail(query, screener_type: str, ticker: str):
     )
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Chart", callback_data=f"chart_{ticker}"),
-         InlineKeyboardButton("🏦 Broker Flow", callback_data=f"broker_{ticker}")],
-        [InlineKeyboardButton("🔥 Heatmap", callback_data="menu_heatmap"),
-         InlineKeyboardButton("⭐ Watchlist", callback_data=f"watch_add_{ticker}")],
-        [InlineKeyboardButton("🔙 Back", callback_data=f"screen_{screener_type}")],
+        [InlineKeyboardButton("📊 Chart",         callback_data=f"chart_{ticker}"),
+         InlineKeyboardButton("🏦 Broker Flow",   callback_data=f"broker_{ticker}")],
+        [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}"),
+         InlineKeyboardButton("🔥 Heatmap",       callback_data="menu_heatmap")],
+        [InlineKeyboardButton("🔙 Back",          callback_data=f"screen_{screener_type}"),
+         InlineKeyboardButton("🏠 Menu",          callback_data="menu_main")],
     ])
-    await query.edit_message_text(text[:4096], parse_mode="Markdown", reply_markup=kb)
+    await safe_edit(query, text[:4096], reply_markup=kb)
+
+
+async def _cb_chart(query, ticker: str):
+    from bot.services.data_service import get_stock_data, compute_indicators
+    from bot.bandarmology.broker_analyzer import estimate_broker_signal
+    from bot.charts.chart_generator import generate_stock_chart
+
+    df = get_stock_data(ticker, period="3mo")
+    if df is None or len(df) < 5:
+        await safe_edit(query, f"❌ No data for *{ticker}*.")
+        return
+
+    df       = compute_indicators(df)
+    latest   = df.iloc[-1]
+    prev     = df.iloc[-2] if len(df) > 1 else latest
+    price    = latest["Close"]
+    prev_p   = prev["Close"]
+    pct_chg  = (price - prev_p) / prev_p * 100
+    rsi      = latest.get("RSI") or 0
+    macd     = latest.get("MACD")
+    macd_sig = latest.get("MACD_Signal")
+    ma5      = latest.get("MA5")
+    ma20     = latest.get("MA20")
+    ma50     = latest.get("MA50")
+    rel_vol  = latest.get("RelVol", 1) or 1
+    volume   = latest["Volume"]
+    value    = price * volume
+    sector   = next((s for s, t in IDX_STOCKS.items() if ticker in t), "Other")
+
+    snap = {
+        "ticker": ticker, "price": price, "prev_price": prev_p,
+        "pct_chg": pct_chg, "volume": volume, "value": value,
+        "rel_vol": rel_vol, "bandar_score": latest.get("BandarScore", 0),
+        "ma20": ma20, "ma50": ma50,
+        "high": latest["High"], "low": latest["Low"],
+        "vwap": latest.get("VWAP"),
+    }
+    broker = estimate_broker_signal(snap)
+    sign   = "+" if pct_chg >= 0 else ""
+    trend  = "🟢" if pct_chg >= 0 else "🔴"
+    rsi_n  = " ⚠️ OB" if rsi > 70 else " ⚠️ OS" if rsi < 30 else ""
+
+    caption = (
+        f"📊 *{ticker}* — {sector}\n\n"
+        f"💰 Price: *{fmt_price(price)}* {trend} {sign}{pct_chg:.2f}%\n"
+        f"📦 Vol: {fmt_volume(volume)} ({rel_vol:.1f}x)\n"
+        f"💵 Value: {fmt_value(value)}\n\n"
+        f"*Technical:*\n"
+        f"  MA5:{fmt_price(ma5)} | MA20:{fmt_price(ma20)} | MA50:{fmt_price(ma50)}\n"
+        f"  RSI: {rsi:.1f}{rsi_n} | MACD: {'🟢' if macd and macd_sig and macd > macd_sig else '🔴'}\n\n"
+        f"🏦 Broker: *{broker['bandar_label']}*"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏦 Broker Flow",   callback_data=f"broker_{ticker}"),
+         InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}")],
+        [InlineKeyboardButton("🔥 Heatmap",       callback_data="menu_heatmap"),
+         InlineKeyboardButton("🏠 Menu",          callback_data="menu_main")],
+    ])
+
+    buf = generate_stock_chart(ticker)
+    if buf:
+        await safe_send_photo(query, buf, caption, reply_markup=kb)
+    else:
+        await safe_edit(query, caption, reply_markup=kb)
+
+
+async def _cb_broker(query, ticker: str):
+    from bot.bandarmology.broker_analyzer import estimate_broker_signal, format_broker_report
+
+    snaps = get_market_snapshot([ticker])
+    if not snaps:
+        await safe_edit(query, f"❌ No data for *{ticker}*.")
+        return
+
+    broker_data = estimate_broker_signal(snaps[0])
+    report      = format_broker_report(ticker, broker_data)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Chart",         callback_data=f"chart_{ticker}"),
+         InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}")],
+        [InlineKeyboardButton("🔄 Refresh",       callback_data=f"broker_{ticker}"),
+         InlineKeyboardButton("🏠 Menu",          callback_data="menu_main")],
+    ])
+    # Broker report is always text — safe_edit handles both photo and text messages
+    await safe_edit(query, report, reply_markup=kb)
+
+
+async def _cb_heatmap(query, sector: str | None):
+    from bot.heatmap.heatmap_generator import generate_heatmap
+    buf = generate_heatmap(sector)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏦 Banking",    callback_data="heatmap_Banking"),
+         InlineKeyboardButton("💻 Tech",       callback_data="heatmap_Technology")],
+        [InlineKeyboardButton("⚡ Energy",     callback_data="heatmap_Energy"),
+         InlineKeyboardButton("🛒 Consumer",   callback_data="heatmap_Consumer")],
+        [InlineKeyboardButton("🏥 Healthcare", callback_data="heatmap_Healthcare"),
+         InlineKeyboardButton("🏠 Property",   callback_data="heatmap_Property")],
+        [InlineKeyboardButton("🏭 Industrial", callback_data="heatmap_Industrial"),
+         InlineKeyboardButton("🌴 Plantation", callback_data="heatmap_Plantation")],
+        [InlineKeyboardButton("🔄 All Sectors", callback_data="heatmap_all"),
+         InlineKeyboardButton("🏠 Menu",        callback_data="menu_main")],
+    ])
+    label = sector if sector else "All Sectors"
+    caption = f"🔥 *IDX Heatmap — {label}*\n\nTap a sector to filter:"
+
+    if buf:
+        await safe_send_photo(query, buf, caption, reply_markup=kb)
+    else:
+        await safe_edit(query, "❌ Heatmap unavailable. Try again shortly.", reply_markup=kb)
+
+
+async def _cb_sector(query):
+    from bot.sector_rotation.sector_analyzer import analyze_sectors, format_sector_rotation
+    result = analyze_sectors()
+    text   = format_sector_rotation(result)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔥 Heatmap",    callback_data="menu_heatmap"),
+         InlineKeyboardButton("🏦 Bandar",     callback_data="menu_bandar")],
+        [InlineKeyboardButton("🔄 Refresh",    callback_data="menu_sector"),
+         InlineKeyboardButton("🏠 Menu",       callback_data="menu_main")],
+    ])
+    await safe_edit(query, text, reply_markup=kb)
+
+
+async def _cb_momentum(query):
+    snaps = get_market_snapshot(ALL_IDX_STOCKS[:50])
+    snaps.sort(key=lambda x: x.get("pct_chg", 0), reverse=True)
+    top   = snaps[:10]
+    lines = ["⚡ *Top Momentum Stocks*\n"]
+    for i, s in enumerate(top, 1):
+        t    = s.get("ticker", "")
+        pct  = s.get("pct_chg", 0)
+        rv   = s.get("rel_vol", 1) or 1
+        sign = "+" if pct >= 0 else ""
+        lines.append(f"{i}. *{t}* {sign}{pct:.2f}% | Vol:{rv:.1f}x | {fmt_price(s.get('price'))}")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu_momentum"),
+         InlineKeyboardButton("🏠 Menu",    callback_data="menu_main")],
+    ])
+    await safe_edit(query, "\n".join(lines), reply_markup=kb)
+
+
+async def _cb_breadth(query):
+    snaps   = get_market_snapshot(ALL_IDX_STOCKS[:60])
+    ihsg    = get_ihsg_data()
+    adv     = sum(1 for s in snaps if s.get("pct_chg", 0) > 0)
+    dec     = sum(1 for s in snaps if s.get("pct_chg", 0) < 0)
+    unch    = len(snaps) - adv - dec
+    total   = len(snaps)
+    ratio   = adv / max(dec, 1)
+    cond    = "🟢 Bullish" if ratio > 1.5 else "🔴 Bearish" if ratio < 0.7 else "🟡 Mixed"
+    pct     = ihsg.get("pct_chg", 0)
+    sign    = "+" if pct >= 0 else ""
+    text    = (
+        f"📉 *Market Breadth*\n\n"
+        f"*IHSG:* {ihsg.get('price',0):,.2f} ({sign}{pct:.2f}%)\n"
+        f"*Condition:* {cond}\n\n"
+        f"🟢 Advance: {adv} ({adv/total*100:.0f}%)\n"
+        f"🔴 Decline: {dec} ({dec/total*100:.0f}%)\n"
+        f"⚪ Unchanged: {unch}\n"
+        f"📊 A/D Ratio: {ratio:.2f}\n\n"
+        f"High-Vol Gainers: {sum(1 for s in snaps if s.get('pct_chg',0)>0 and (s.get('rel_vol') or 1)>1.5)}\n"
+        f"High-Vol Losers:  {sum(1 for s in snaps if s.get('pct_chg',0)<0 and (s.get('rel_vol') or 1)>1.5)}\n\n"
+        f"Overbought RSI>70: {sum(1 for s in snaps if (s.get('rsi') or 0)>70)}\n"
+        f"Oversold  RSI<30:  {sum(1 for s in snaps if (s.get('rsi') or 50)<30)}"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu_breadth"),
+         InlineKeyboardButton("🏠 Menu",    callback_data="menu_main")],
+    ])
+    await safe_edit(query, text, reply_markup=kb)
+
+
+async def _cb_foreign(query):
+    snaps = get_market_snapshot(ALL_IDX_STOCKS[:50])
+    buys  = sorted(
+        [s for s in snaps if s.get("pct_chg", 0) > 0.5 and (s.get("rel_vol") or 1) > 1.5],
+        key=lambda x: x.get("pct_chg", 0), reverse=True,
+    )[:8]
+    sells = [s for s in snaps if s.get("pct_chg", 0) < -0.5 and (s.get("rel_vol") or 1) > 1.5][:5]
+    lines = ["💰 *Foreign Flow Tracker*\n", "*Est. Net Foreign Buy:*\n"]
+    for s in buys:
+        rv = s.get("rel_vol", 1) or 1
+        lines.append(f"  🟢 *{s['ticker']}* +{s['pct_chg']:.2f}% | {rv:.1f}x vol")
+    lines.append("\n*Est. Net Foreign Sell:*\n")
+    for s in sells:
+        lines.append(f"  🔴 *{s['ticker']}* {s['pct_chg']:.2f}%")
+    lines.append("\n⚠️ _Estimated. Actual data needs paid IDX provider._")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu_foreign"),
+         InlineKeyboardButton("🏠 Menu",    callback_data="menu_main")],
+    ])
+    await safe_edit(query, "\n".join(lines), reply_markup=kb)
+
+
+async def _cb_bandar_menu(query):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏦 BBCA", callback_data="broker_BBCA"),
+         InlineKeyboardButton("🏦 BMRI", callback_data="broker_BMRI"),
+         InlineKeyboardButton("🏦 BBRI", callback_data="broker_BBRI")],
+        [InlineKeyboardButton("🏦 TLKM", callback_data="broker_TLKM"),
+         InlineKeyboardButton("🏦 ADRO", callback_data="broker_ADRO"),
+         InlineKeyboardButton("🏦 ASII", callback_data="broker_ASII")],
+        [InlineKeyboardButton("🏦 ANTM", callback_data="broker_ANTM"),
+         InlineKeyboardButton("🏦 MDKA", callback_data="broker_MDKA"),
+         InlineKeyboardButton("🏦 PTBA", callback_data="broker_PTBA")],
+        [InlineKeyboardButton("🏠 Menu", callback_data="menu_main")],
+    ])
+    await safe_edit(
+        query,
+        "🏦 *Bandar Detector*\n\n"
+        "Tap a stock or type `/bandar TICKER`:\n\n"
+        "Analyzes: AK · BK · YP · CC · PD · XL broker flow",
+        reply_markup=kb,
+    )
+
+
+async def _cb_watchlist(query, user_id: int):
+    wl = get_watchlist(user_id)
+    if not wl:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📈 Screener", callback_data="menu_screener")],
+            [InlineKeyboardButton("🏠 Menu",     callback_data="menu_main")],
+        ])
+        await safe_edit(
+            query,
+            "📊 *Watchlist empty.*\n\nAdd stocks with `/add TICKER`",
+            reply_markup=kb,
+        )
+        return
+    snaps    = get_market_snapshot(wl)
+    snap_map = {s["ticker"]: s for s in snaps}
+    lines    = ["📊 *Your Watchlist*\n"]
+    buttons  = []
+    for ticker in wl:
+        s    = snap_map.get(ticker, {})
+        pct  = s.get("pct_chg", 0)
+        sign = "+" if pct >= 0 else ""
+        e    = "🟢" if pct >= 0 else "🔴"
+        lines.append(f"{e} *{ticker}* {fmt_price(s.get('price',0))} ({sign}{pct:.2f}%)")
+        buttons.append(InlineKeyboardButton(f"📊 {ticker}", callback_data=f"chart_{ticker}"))
+    rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
+    rows.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data="menu_watchlist"),
+        InlineKeyboardButton("🏠 Menu",    callback_data="menu_main"),
+    ])
+    await safe_edit(query, "\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _cb_settings(query):
+    text = (
+        "⚙️ *Settings*\n\n"
+        "*Data Source:* Yahoo Finance (.JK)\n"
+        "*Chart Style:* Dark theme\n"
+        "*Alerts:* Every 5 minutes for watchlist\n"
+        "*Focus Brokers:* AK · BK · YP · CC · PD · XL\n\n"
+        "*Screeners Available:*\n"
+        "• 🎯 ARA Hunter\n"
+        "• 📈 BSJP\n"
+        "• 🏦 Big Accumulation\n"
+        "• ⚡ Scalper Pro\n\n"
+        "⚠️ *Note:* Real IDX broker flow data requires a paid provider "
+        "(Stockbit, RTI Business). Current analysis is estimated from "
+        "price/volume patterns."
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Back", callback_data="menu_main")]])
+    await safe_edit(query, text, reply_markup=kb)

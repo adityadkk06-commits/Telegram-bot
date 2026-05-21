@@ -29,7 +29,7 @@ IDX_STOCKS = {
     ],
     "Infrastructure": [
         "JSMR", "WIKA", "PTPP", "ADHI", "WSKT", "TBIG", "TOWR",
-        "KOPI", "META", "TAXI",
+        "KOPI", "META",
     ],
     "Finance": [
         "BBTN", "ADMF", "BFI", "CFIN", "MFIN", "VRNA", "APIC",
@@ -70,11 +70,23 @@ SECTOR_ETFS = {
 IHSG_TICKER = "^JKSE"
 
 SCREENER_NAMES = {
-    "ara_hunter": "ARA HUNTER",
-    "bsjp": "BSJP",
-    "big_accumulation": "BIG ACCUMULATION",
+    "ara_hunter":       "🎯 ARA HUNTER",
+    "bsjp":             "📈 BSJP",
+    "big_accumulation": "🏦 BIG ACCUMULATION",
+    "scalper_pro":      "⚡ SCALPER PRO",
 }
 
 MIN_VALUE_ARA = 5_000_000_000
 MIN_VALUE_BSJP = 10_000_000_000
 MIN_VALUE_BIG = 3_000_000_000
+
+# Persistent bottom keyboard button labels
+BTN_SCREENER  = "📈 Screener"
+BTN_HEATMAP   = "🔥 Heatmap"
+BTN_SECTOR    = "🔄 Sector"
+BTN_BANDAR    = "🏦 Bandar"
+BTN_WATCHLIST = "📊 Watchlist"
+BTN_MOMENTUM  = "⚡ Momentum"
+BTN_FOREIGN   = "💰 Foreign Flow"
+BTN_BREADTH   = "📉 Breadth"
+BTN_MENU      = "🏠 Menu"
