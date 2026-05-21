@@ -1,36 +1,70 @@
-# [Project name]
+# IDX Stock Screener Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+AI-powered Telegram bot for Indonesian Stock Market (IDX/IHSG) screening, analysis, and charting.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `python -m bot.main` — start the Telegram bot
+- Required env: `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3.11
+- python-telegram-bot (v20+ async)
+- yfinance — IDX stock data via Yahoo Finance (.JK suffix)
+- mplfinance + matplotlib — candlestick charts (dark theme)
+- pandas + ta — technical indicators (MA, RSI, MACD, VWAP)
+- APScheduler (via job-queue) — watchlist alert scheduler
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+bot/
+  main.py               — entry point, workflow registration
+  handlers/
+    command_handlers.py — /start, /screener, /chart, /heatmap, etc.
+    callback_handlers.py— inline keyboard callback router
+  services/
+    data_service.py     — yfinance data fetch + indicator computation
+    ai_service.py       — rule-based AI explanations
+  screener/
+    screener_engine.py  — runs screeners, enriches with scores/broker
+    ara_hunter.py       — ARA Hunter filter
+    bsjp.py             — BSJP filter
+    big_accumulation.py — Big Accumulation filter
+  charts/
+    chart_generator.py  — mplfinance dark-theme candlestick charts
+  heatmap/
+    heatmap_generator.py— matplotlib sector heatmap image
+  sector_rotation/
+    sector_analyzer.py  — per-sector performance and rotation score
+  bandarmology/
+    broker_analyzer.py  — broker/bandar accumulation signal estimator
+  data/
+    watchlist.py        — JSON-based per-user watchlist
+  utils/
+    constants.py        — IDX stock universe, sectors, broker list
+    formatters.py       — price/volume/score formatting helpers
+```
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- yfinance with `.JK` suffix is used for IDX data (free, no API key needed)
+- Broker/bandar flows are estimated from price+volume patterns since real IDX broker data requires a paid provider (Stockbit, RTI Business)
+- AI explanations are rule-based (no LLM cost); can be upgraded to Gemini/OpenAI
+- Watchlist stored in `bot/data/watchlists.json` (simple, portable)
+- All Telegram interactions use inline keyboards for smooth navigation
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **3 screeners**: ARA Hunter, BSJP, Big Accumulation
+- **Heatmap**: Sector-based with color scale, filterable by sector
+- **Sector Rotation**: Daily ranking with rotation score and buy candidates
+- **Bandar Detector**: AK/BK/YP/CC/PD/XL broker accumulation analysis
+- **Charts**: Candlestick + MA5/20/50 + RSI + MACD + buy/sell signals
+- **Watchlist**: Per-user with auto breakout/volume alerts every 5 minutes
+- **Market Breadth**: Advance/Decline ratio, RSI extremes
+- **Top Momentum**: Sorted by % change with relative volume
 
 ## User preferences
 
@@ -38,8 +72,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- IDX market hours: 09:00–16:00 WIB (UTC+7). Outside hours, yfinance returns last close data.
+- Broker flow analysis is simulated — label it clearly to users (done in the UI).
+- `/TICKER` commands (e.g. `/bbca`) are handled via a regex message handler, not individual CommandHandlers.
+- Always run `python -m bot.main` from the workspace root so relative imports resolve.
