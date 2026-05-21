@@ -13,6 +13,7 @@ from bot.handlers.command_handlers import (
     cmd_start, cmd_menu, cmd_help, cmd_chart, cmd_screener,
     cmd_heatmap, cmd_sector, cmd_momentum, cmd_breadth,
     cmd_watchlist, cmd_add, cmd_remove, cmd_bandar, cmd_foreign,
+    cmd_alert,
     BOTTOM_KB,
 )
 from bot.utils.constants import (
@@ -392,6 +393,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("bigacc", cmd_bigacc))
     app.add_handler(CommandHandler("scalp",  cmd_scalp))
 
+    # Price alerts
+    app.add_handler(CommandHandler("alert",  cmd_alert))
+
     # Bottom keyboard text buttons (must come BEFORE ticker handler)
     kb_labels = [
         BTN_SCREENER, BTN_HEATMAP, BTN_SECTOR, BTN_BANDAR,
@@ -426,6 +430,18 @@ def build_app() -> Application:
             time=dt_time(9, 5, tzinfo=pytz.utc),
             days=(0, 1, 2, 3, 4),
         )
+
+        # ── New alert engine jobs ────────────────────────────────────────
+        from bot.alerts.scanner import top_gainer_scan, golden_cross_scan, price_alert_check
+
+        # Top 5 Gainer scan — every 3 min during market hours
+        jq.run_repeating(top_gainer_scan,   interval=180, first=90)
+
+        # Golden Cross scan — every 5 min during market hours
+        jq.run_repeating(golden_cross_scan, interval=300, first=150)
+
+        # Custom price alert check — every 2 min
+        jq.run_repeating(price_alert_check, interval=120, first=30)
 
     app.add_error_handler(global_error_handler)
     return app

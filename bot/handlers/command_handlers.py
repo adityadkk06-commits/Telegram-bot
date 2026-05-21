@@ -418,6 +418,112 @@ async def _send_broker_report(message, ticker: str):
     await message.reply_text(report, parse_mode="Markdown", reply_markup=kb)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  /alert  — Custom price alert
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def cmd_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Usage:
+      /alert BBCA 9500      — alert when BBCA crosses 9,500
+      /alert list           — show your active alerts
+      /alert remove BBCA    — remove all alerts for BBCA
+    """
+    args = context.args or []
+    user_id = update.effective_user.id
+
+    # ── list ──────────────────────────────────────────────────────────────
+    if not args or args[0].lower() == "list":
+        from bot.alerts.price_alerts import get_user_alerts
+        alerts = get_user_alerts(user_id)
+        if not alerts:
+            await update.message.reply_text(
+                "📋 *No active price alerts.*\n\n"
+                "Set one with:\n`/alert BBCA 9500`",
+                parse_mode="Markdown",
+                reply_markup=BOTTOM_KB,
+            )
+            return
+        lines = ["📋 *Your Price Alerts:*\n"]
+        for a in alerts:
+            arrow = "📈" if a["direction"] == "above" else "📉"
+            lines.append(
+                f"{arrow} *{a['ticker']}* → {a['direction']} *{a['target']:,.0f}*"
+                f"  (from {a['current']:,.0f})"
+            )
+        lines.append("\n_Remove with:_ `/alert remove TICKER`")
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode="Markdown", reply_markup=BOTTOM_KB,
+        )
+        return
+
+    # ── remove ────────────────────────────────────────────────────────────
+    if args[0].lower() == "remove" and len(args) >= 2:
+        from bot.alerts.price_alerts import remove_user_alert
+        ticker = args[1].upper().strip()
+        ok = remove_user_alert(user_id, ticker)
+        await update.message.reply_text(
+            f"✅ Removed all alerts for *{ticker}*." if ok else f"⚠️ No alerts found for *{ticker}*.",
+            parse_mode="Markdown",
+            reply_markup=BOTTOM_KB,
+        )
+        return
+
+    # ── set new alert ─────────────────────────────────────────────────────
+    if len(args) < 2:
+        await update.message.reply_text(
+            "❌ *Usage:* `/alert TICKER TARGET`\n"
+            "Example: `/alert BBCA 9500`\n\n"
+            "Or view alerts: `/alert list`\n"
+            "Remove: `/alert remove BBCA`",
+            parse_mode="Markdown",
+            reply_markup=BOTTOM_KB,
+        )
+        return
+
+    ticker = args[0].upper().strip()
+    try:
+        target = float(args[1].replace(",", "").replace(".", ""))
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid price. Use: `/alert BBCA 9500`",
+            parse_mode="Markdown",
+        )
+        return
+
+    if target <= 0:
+        await update.message.reply_text("❌ Target price must be > 0.", parse_mode="Markdown")
+        return
+
+    # Fetch current price
+    msg   = await update.message.reply_text(f"⏳ Fetching *{ticker}* price…", parse_mode="Markdown")
+    snaps = get_market_snapshot([ticker])
+    if not snaps:
+        await msg.edit_text(
+            f"❌ Could not find *{ticker}*. Make sure it's a valid IDX ticker.",
+            parse_mode="Markdown",
+        )
+        return
+
+    current_price = snaps[0].get("price", 0)
+    if not current_price:
+        await msg.edit_text(f"❌ No price data for *{ticker}*.", parse_mode="Markdown")
+        return
+
+    from bot.alerts.price_alerts import add_price_alert
+    confirmation = add_price_alert(user_id, ticker, target, current_price)
+    await msg.delete()
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 My Alerts",   callback_data="menu_main"),
+         InlineKeyboardButton("📊 Chart",       callback_data=f"chart_{ticker}")],
+        [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}"),
+         InlineKeyboardButton("🏠 Menu",         callback_data="menu_main")],
+    ])
+    await update.message.reply_text(
+        confirmation, parse_mode="Markdown", reply_markup=kb,
+    )
+
+
 async def cmd_foreign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg   = await update.message.reply_text("⏳ Scanning foreign flow...")
     snaps = get_market_snapshot(ALL_IDX_STOCKS[:50])

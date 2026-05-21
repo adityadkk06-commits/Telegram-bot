@@ -1,0 +1,124 @@
+Add it, and also enhance the system with a fully automated IDX Top Gainer Alert Engine.
+
+IMPORTANT:
+- Do NOT modify, remove, or break any existing features, logic, UI, screening system, heatmap, sector rotation, broker analysis, or current bot structure.
+- Only add the new features requested below.
+- Existing programs must remain exactly as they are and continue working normally.
+- The implementation must be backward-compatible and modular.
+- Avoid changing previous workflows unless absolutely necessary.
+- New features must integrate cleanly without affecting old functions.
+
+Main Features Required:
+
+1. Custom Price Alert
+- Users can type:
+  /alert BBCA 9500
+- The bot will monitor the stock continuously and notify users instantly when the price crosses the target level.
+
+2. Fully Automatic IDX Top 5 Gainer Alert
+- The bot must automatically scan and update the Top 5 Gainer stocks from IDX continuously during market hours.
+- Alerts should trigger automatically whenever there are changes in the Top Gainer rankings.
+- No manual refresh or button interaction.
+
+3. Professional Trading Analysis Engine
+For every Top 5 Gainer stock detected:
+- Analyze using professional trader methodology:
+  - Bid/Offer analysis
+  - Broker accumulation/distribution
+  - Volume spike detection
+  - Momentum strength
+  - Breakout confirmation
+  - Support & resistance
+  - Smart money flow
+- Generate:
+  - Buy signal
+  - Entry price
+  - Take Profit (TP)
+  - Stop Loss (SL)
+  - Risk/reward ratio
+  - Confidence level
+
+4. Auto Chart in Alert
+- Every alert must include:
+  - Candlestick chart
+  - MA10 & MA20
+  - Volume bars
+  - Buy/Sell zone
+  - Breakout area
+  - Bid-offer heat visualization if available
+
+5. Automatic Golden Cross Alert
+- Continuously scan all IDX stocks.
+- Detect automatically when:
+  - MA10 crosses above MA20 (Golden Cross)
+- Send instant notifications automatically.
+- This feature must NOT use buttons.
+- Fully background monitoring system connected to IDX market data.
+
+6. Real-Time Notification System
+- Instant Telegram push notifications
+- Market open and intraday monitoring
+- Auto-update during trading sessions
+- Queue system to prevent spam/flood
+
+7. Stability & Production Requirement
+- The system must be production-ready, stable, and modular.
+- Existing screening and heatmap features must remain intact without breaking.
+- Avoid future revision conflicts.
+- Ensure:
+  - No duplicate handlers
+  - No memory leaks
+  - No blocking loop
+  - Proper async architecture
+  - Error handling & retry system
+  - Logging system
+  - Fail-safe reconnect for API/data stream
+  - Clean folder structure
+  - Easy future maintenance
+
+8. Technical Architecture
+Use:
+- Python AsyncIO
+- WebSocket streaming if available
+- Scheduler/background worker
+- Modular files:
+  - alerts.py
+  - scanner.py
+  - signal_engine.py
+  - chart_generator.py
+  - broker_analysis.py
+  - notification.py
+  - market_scheduler.py
+
+9. Alert Format Example
+
+🚨 TOP GAINER ALERT - IDX
+
+Stock: BBCA
+Price: 9,550 (+6.8%)
+
+Analysis:
+✅ Broker AK accumulation detected
+✅ Strong bid support
+✅ Volume breakout above average
+✅ MA10 > MA20 bullish confirmation
+
+Trade Plan:
+🎯 Entry: 9,500 - 9,530
+🎯 TP1: 9,700
+🎯 TP2: 9,850
+🛑 SL: 9,380
+
+Confidence:
+8.7/10
+
+The alert must also attach an auto-generated chart image.
+
+10. Final Requirement
+- The entire previous system must remain untouched and stable.
+- Only add the requested features.
+- Do not rewrite existing modules unnecessarily.
+- Maintain compatibility with all current handlers and commands.
+- No fake/random signals.
+- Prioritize high probability setups only.
+- Optimize performance so the bot remains fast and responsive even with continuous scanning.
