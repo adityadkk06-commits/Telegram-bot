@@ -1,0 +1,375 @@
+Create an advanced Telegram Stock Screener Bot for Indonesian Stock Market (IDX/IHSG) using Python.
+
+Main Goal:
+Build a professional AI-powered IDX stock screening bot with:
+- Multi screener support
+- Sector rotation analysis
+- Heatmap visualization
+- Bandarology analysis
+- AK/BK broker accumulation detection
+- Dynamic chart generation
+- AI explanation why stock entered screener
+- Telegram inline keyboard buttons
+- Real-time IDX market monitoring
+
+========================================
+GENERAL REQUIREMENTS
+========================================
+
+Use:
+- Python
+- python-telegram-bot
+- pandas
+- mplfinance
+- matplotlib
+- plotly
+- yfinance or IDX data provider
+- requests
+- asyncio
+- ta library
+- Pillow
+
+Bot must support:
+- Telegram command handler
+- Inline keyboard button navigation
+- Dynamic chart image generation
+- Async processing
+- Auto update sector rotation
+- Heatmap rendering
+- Broker accumulation analysis
+- Multi screener engine
+
+========================================
+SCREENER SYSTEM
+========================================
+
+Create 3 built-in screeners based on the filters below.
+
+1. ARA HUNTER
+Rules:
+- Price > MA5
+- Price > 1.05 x Previous Price
+- Price > Open Price
+- Volume > 0.2 x Previous Volume
+- Value > 5 Billion IDR
+
+2. BSJP
+Rules:
+- Value > 10 Billion
+- Volume > 1.2 x Previous Volume
+- Price > MA20
+- MA20 > MA50
+- Price > 1.01 x Previous Price
+- Price >= MA5
+- Volume > 2 x Volume MA20
+- Net Foreign Buy Streak >= 2 days
+
+3. BIG ACCUMULATION
+Rules:
+- Bandar Accumulation/Distribution > 25
+- Value > 3 Billion
+- MA20 > MA50
+- Price < 500
+- Volume MA5 > 1.3 x Volume MA20
+- Price > Previous Price
+
+========================================
+MAIN MENU BUTTONS
+========================================
+
+Create Telegram inline keyboard buttons:
+
+[📈 Screener]
+[🔥 Heatmap]
+[🔄 Sector Rotation]
+[🏦 Bandar Detector]
+[📊 Watchlist]
+[⚡ Top Momentum]
+[💰 Foreign Flow]
+[📉 Market Breadth]
+[⚙️ Settings]
+
+========================================
+SCREENER OUTPUT
+========================================
+
+When screener runs:
+- Display stock list
+- Generate chart image automatically
+- Show technical analysis
+- Show volume analysis
+- Show AI explanation why stock passed screener
+- Show sector
+- Show momentum score
+- Show broker accumulation
+
+Example Output:
+
+BBCA
+Price: 9,950
+Sector: Banking
+Momentum Score: 87/100
+Foreign Flow: Positive
+Bandar Status: AK Accumulation
+
+Reason:
+- Breakout above MA20
+- Volume spike 2.5x
+- Strong foreign inflow
+- AK broker accumulating
+- Banking sector entering rotation
+
+Buttons:
+[📊 Chart]
+[🏦 Broker Flow]
+[🔥 Heatmap]
+[⭐ Add Watchlist]
+
+========================================
+CHART SYSTEM
+========================================
+
+When user types:
+- /bbca
+- /tlkm
+- /bmri
+
+Bot should display:
+1. Candlestick chart
+2. MA5, MA20, MA50
+3. Volume bars
+4. Buy/Sell signal
+5. Broker accumulation zone
+6. Foreign flow
+7. AI analysis summary
+
+Chart must:
+- Auto generate image
+- Clean professional dark theme
+- Highlight breakout zones
+- Highlight accumulation area
+
+========================================
+HEATMAP SYSTEM
+========================================
+
+Create live IDX heatmap.
+
+Features:
+- Sector-based heatmap
+- Green = bullish
+- Red = bearish
+- Bigger box = bigger market cap/value
+- Show:
+  - Top gainers
+  - Top losers
+  - Most accumulated
+  - Highest volume
+
+Buttons:
+[Banking]
+[Technology]
+[Energy]
+[Consumer]
+[Healthcare]
+[Property]
+[Industrial]
+
+========================================
+SECTOR ROTATION SYSTEM
+========================================
+
+Create dynamic IDX sector rotation engine.
+
+Features:
+- Detect strongest sector
+- Detect weakest sector
+- Rotation momentum score
+- Daily sector ranking
+- Sector inflow/outflow
+
+Output example:
+
+🔥 Strongest Sector Today:
+1. Banking (+4.5%)
+2. Energy (+3.2%)
+3. Technology (+2.8%)
+
+⚠ Weakest Sector:
+1. Property
+2. Transportation
+
+Recommended Buy Candidates:
+- BBCA
+- BMRI
+- BBRI
+
+Each stock must have:
+- Buy score
+- Momentum score
+- Volume score
+- Broker accumulation score
+
+Buttons:
+[📊 View Charts]
+[🏦 Bandar Flow]
+[⭐ Add Watchlist]
+
+========================================
+BANDAROLOGY / BROKER FLOW
+========================================
+
+Create advanced broker accumulation analysis.
+
+Focus brokers:
+- AK
+- BK
+- YP
+- CC
+- PD
+- XL
+
+Features:
+- Detect accumulation
+- Detect distribution
+- Net buy/sell
+- Broker dominance
+- Broker trend
+
+Output example:
+
+Broker Analysis: BBCA
+
+AK: +120B accumulation
+BK: +75B accumulation
+YP: -30B distribution
+
+Conclusion:
+Strong accumulation detected from AK and BK.
+
+Signal:
+Bullish accumulation phase.
+
+========================================
+WATCHLIST SYSTEM
+========================================
+
+Users can:
+- Add stocks to watchlist
+- Remove watchlist
+- Auto monitor watchlist
+- Receive breakout alerts
+- Receive unusual volume alerts
+
+========================================
+TOP MOMENTUM SYSTEM
+========================================
+
+Display:
+- Strongest momentum stocks
+- Highest relative volume
+- Breakout candidates
+- Near ARA candidates
+
+========================================
+MARKET BREADTH SYSTEM
+========================================
+
+Display:
+- IHSG condition
+- Advance vs Decline
+- Foreign net buy
+- Sector breadth
+- Momentum breadth
+
+========================================
+AUTO ANALYSIS AI
+========================================
+
+Every stock result must include AI-generated analysis:
+- Why it entered screener
+- Risk level
+- Momentum condition
+- Sector condition
+- Bandar condition
+- Probability of continuation
+
+========================================
+TECHNICAL INDICATORS
+========================================
+
+Use:
+- MA5
+- MA20
+- MA50
+- RSI
+- MACD
+- VWAP
+- Relative Volume
+- Volume Spike
+- Breakout Detection
+
+========================================
+TELEGRAM FEATURES
+========================================
+
+Must support:
+- Inline keyboard
+- Callback query
+- Multi menu navigation
+- Auto refresh
+- Image sending
+- Chart sending
+- Alert notification
+- Watchlist notification
+
+========================================
+PERFORMANCE
+========================================
+
+Optimize for:
+- Fast scanning
+- Async processing
+- Modular structure
+- Clean architecture
+
+Folder Structure:
+
+/bot
+/main.py
+/handlers
+/services
+/charts
+/screener
+/bandarmology
+/heatmap
+/sector_rotation
+/utils
+/data
+
+========================================
+EXTRA FEATURES
+========================================
+
+Add:
+- Auto market open detection
+- Market close summary
+- Intraday momentum tracker
+- Unusual volume detector
+- Smart money tracker
+- AI confidence score
+- Foreign accumulation detector
+- Telegram alert scheduler
+
+========================================
+IMPORTANT
+========================================
+
+- Do NOT remove existing screener filters.
+- Keep screener logic modular.
+- Make charts responsive.
+- All menus must use inline keyboard buttons.
+- Sector rotation must update automatically.
+- Heatmap must refresh dynamically.
+- Broker accumulation must prioritize AK and BK.
+- Every stock result must include chart + AI explanation.
