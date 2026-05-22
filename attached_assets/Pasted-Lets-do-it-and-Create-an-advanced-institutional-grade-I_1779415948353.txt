@@ -1,0 +1,155 @@
+Lets do it and Create an advanced institutional-grade IDX Top 5 Gainers Auto Analysis System with ultra-precise bid-offer analysis, automatic alerts every 5 minutes, and fully automated trading signal generation. The system must be stable, production-ready, lightweight, modular, and integrated into the existing project WITHOUT breaking or modifying previous working features.
+
+IMPORTANT:
+- DO NOT remove old features.
+- DO NOT rewrite stable modules unnecessarily.
+- ONLY add and integrate new features.
+- Everything must remain backward compatible.
+- No bugs, no placeholders, no fake analysis, no unfinished logic.
+- The system must automatically self-check all previous features created yesterday and ensure everything still works perfectly.
+
+MAIN FEATURES:
+
+1. AUTO TOP 5 GAINERS SCANNER
+- Automatically fetch real-time IDX Top 5 Gainers.
+- Refresh every 5 minutes automatically.
+- Detect ranking changes dynamically.
+- Instantly analyze any new stock entering the Top 5.
+- Maintain historical momentum tracking.
+- Prevent duplicate alerts.
+
+2. ADVANCED BID OFFER ANALYSIS ENGINE
+The analysis must include:
+- Bid vs offer strength
+- Bid/offer layering detection
+- Large lot queue analysis
+- Spread analysis
+- Broker accumulation/distribution
+- AK, BK, YP, CC, PD broker movement tracking
+- Volume spike detection
+- Momentum breakout detection
+- False breakout filter
+- Smart money detection
+- VWAP analysis
+- EMA 9 / EMA 20 / EMA 50 alignment
+- RSI momentum
+- MACD confirmation
+- Candle strength analysis
+- Intraday support & resistance
+- Volatility confirmation
+- Liquidity filtering
+- Scalping probability scoring
+
+3. HIGH ACCURACY BUY SIGNAL SYSTEM
+Generate:
+- BUY / WAIT / AVOID signal
+- Entry zone
+- Take Profit (TP1 & TP2)
+- Stop Loss (SL)
+- Risk Reward Ratio
+- Confidence Score (%)
+- Momentum Strength
+- Signal reasoning
+
+The system must:
+- Prioritize quality over quantity.
+- Only send high probability setups.
+- Avoid weak pump-and-dump stocks.
+- Use multi-confirmation logic before triggering BUY signals.
+- Filter fake breakouts and weak volume.
+- Target 90-95% signal accuracy using strict confirmations.
+
+4. TELEGRAM AUTO ALERT SYSTEM
+Automatically send:
+- New Top Gainer alerts
+- Buy signals
+- Momentum spike alerts
+- Volume anomaly alerts
+- Breakdown warnings
+- TP reached notifications
+- SL hit notifications
+- Trend reversal warnings
+
+Alert format must look professional and clean.
+
+Example:
+━━━━━━━━━━━━━━
+🔥 TOP GAINER ALERT
+
+Stock : MBMA
+Price : 486
+Signal : BUY
+Entry : 484-488
+TP1 : 500
+TP2 : 515
+SL : 474
+Confidence : 93%
+Risk Reward : 1:2.8
+
+Analysis:
+✅ Bid domination
+✅ Volume spike
+✅ AK accumulation detected
+✅ Breakout resistance
+✅ EMA bullish alignment
+✅ RSI strong momentum
+
+Status:
+HIGH PROBABILITY SCALPING
+━━━━━━━━━━━━━━
+
+5. AUTO SELF-CHECKING SYSTEM
+The bot must automatically:
+- Validate all old modules still work
+- Check Telegram handlers/buttons
+- Verify imports and dependencies
+- Detect syntax/runtime errors
+- Ensure screener still works
+- Ensure sector rotation still works
+- Ensure heatmap still works
+- Ensure bandar detection still works
+- Ensure alerts still work
+- Ensure scheduler/background tasks still run properly
+
+6. STABILITY & ERROR HANDLING
+Implement:
+- Full error handling
+- Retry system for failed API calls
+- Logging system
+- Fallback data handling
+- Async processing
+- Safe scheduler loops
+- Anti-crash architecture
+- Duplicate alert prevention
+- Spam prevention
+- Automatic reconnect handling
+
+The bot must continue running even if one module fails.
+
+7. PERFORMANCE OPTIMIZATION
+- Optimize for Replit deployment
+- Lightweight architecture
+- Efficient caching
+- Minimal API usage
+- Non-blocking async tasks
+- Stable background workers
+- Fast execution speed
+
+8. CODE REQUIREMENTS
+- Clean architecture
+- Modular structure
+- Fully documented logic
+- Maintainable code
+- Production-ready implementation
+- No temporary fixes
+- No dummy calculations
+- Real market-based analysis only
+
+9. FINAL REQUIREMENTS
+- Recheck all previous tasks before finishing.
+- Ensure no feature regression.
+- Ensure all buttons and scanners work correctly.
+- Ensure the system is fully automated.
+- Ensure all alerts are accurate and properly formatted.
+- Ensure there are absolutely no bugs, syntax issues, import issues, or broken modules.
+- The final result must behave like an institutional-grade trading scanner and automated alert system.

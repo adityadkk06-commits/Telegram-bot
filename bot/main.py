@@ -431,17 +431,21 @@ def build_app() -> Application:
             days=(0, 1, 2, 3, 4),
         )
 
-        # ── New alert engine jobs ────────────────────────────────────────
+        # ── Alert engine jobs ────────────────────────────────────────────
         from bot.alerts.scanner import top_gainer_scan, golden_cross_scan, price_alert_check
+        from bot.alerts.self_check import periodic_self_check
 
-        # Top 5 Gainer scan — every 3 min during market hours
-        jq.run_repeating(top_gainer_scan,   interval=180, first=90)
+        # Top 5 Gainer scan — every 5 min during market hours
+        jq.run_repeating(top_gainer_scan,   interval=300, first=120)
 
         # Golden Cross scan — every 5 min during market hours
-        jq.run_repeating(golden_cross_scan, interval=300, first=150)
+        jq.run_repeating(golden_cross_scan, interval=300, first=180)
 
         # Custom price alert check — every 2 min
         jq.run_repeating(price_alert_check, interval=120, first=30)
+
+        # Auto self-check — every 30 min
+        jq.run_repeating(periodic_self_check, interval=1800, first=10)
 
     app.add_error_handler(global_error_handler)
     return app

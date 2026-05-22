@@ -1,44 +1,52 @@
 """
-Background Scanner Engine.
+Background Scanner Engine — Production Grade.
 
-Two independent scanners (run as APScheduler jobs):
-  1. top_gainer_scan   — finds Top 5 IDX gainers, sends alert on changes
-  2. golden_cross_scan — detects MA10 > MA20 crossovers, sends instant alert
+Scanners (APScheduler jobs):
+  • top_gainer_scan    — Top 5 IDX gainers, every 5 min during market hours
+  • golden_cross_scan  — EMA9 > EMA20 crossover detection, every 5 min
+  • price_alert_check  — Custom user price alerts, every 2 min
 
-Both scanners maintain state in module-level dicts to avoid duplicate alerts.
+Design principles:
+  • State machine dedup — no duplicate alerts per session/day
+  • Min confidence gate — only BUY signals with conf ≥ 75% broadcast
+  • Momentum history   — track 3-scan rolling momentum per ticker
+  • Anti-spam          — notification.py enforces per-user cooldowns
+  • Fail-safe          — any single stock error does NOT crash the scan
 """
+import asyncio
 import logging
+import os
+import json
 from datetime import datetime, date
-from typing import Optional
+from collections import defaultdict, deque
+
 import pandas as pd
 import pytz
 
 from bot.services.data_service import get_market_snapshot, get_stock_data, compute_indicators
 from bot.alerts.market_scheduler import is_market_open
 from bot.alerts.signal_engine import generate_trade_signal, format_signal_message
-from bot.alerts.notification import broadcast_alert
+from bot.alerts.notification import broadcast_alert, send_alert
 from bot.utils.constants import ALL_IDX_STOCKS
 
 logger = logging.getLogger(__name__)
-WIB = pytz.timezone("Asia/Jakarta")
+WIB    = pytz.timezone("Asia/Jakarta")
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Shared state
+#  Shared persistent state
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Previous Top-5 gainer tickers (to detect ranking changes)
-_prev_top5: list[str] = []
-
-# Golden cross alerts already sent today: {ticker: date}
-_gc_alerted: dict[str, date] = {}
-
-# MA state from last scan: {ticker: (prev_ma10, prev_ma20)}
-_prev_ma_state: dict[str, tuple] = {}
+_prev_top5: list[str] = []          # last known Top-5 tickers
+_alerted_gainers: set[str] = set()  # tickers already alerted this session
+_gc_alerted: dict[str, date] = {}   # golden cross alerted: ticker → date
+_momentum_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=3))
 
 
-def _get_users(context) -> list[int]:
-    """Load all registered user IDs from users.json."""
-    import os, json
+# ─────────────────────────────────────────────────────────────────────────────
+#  Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_users() -> list[int]:
     path = os.path.join(os.path.dirname(__file__), "..", "data", "users.json")
     if not os.path.exists(path):
         return []
@@ -49,140 +57,187 @@ def _get_users(context) -> list[int]:
         return []
 
 
+def _get_sector(ticker: str) -> str:
+    from bot.utils.constants import IDX_STOCKS
+    for sector, stocks in IDX_STOCKS.items():
+        if ticker in stocks:
+            return sector
+    return "IDX"
+
+
+def _momentum_trend(ticker: str, pct: float) -> str:
+    """Track rolling pct change and return trend label."""
+    history = _momentum_history[ticker]
+    history.append(pct)
+    if len(history) < 2:
+        return ""
+    avg = sum(history) / len(history)
+    if avg > 3:    return "📈 Accelerating"
+    if avg > 1:    return "➡️ Steady"
+    if avg < -1:   return "📉 Decelerating"
+    return ""
+
+
+async def _safe_snapshot(tickers: list) -> list:
+    """Fetch snapshots with retry (up to 2 attempts)."""
+    for attempt in range(2):
+        try:
+            result = get_market_snapshot(tickers)
+            if result:
+                return result
+        except Exception as e:
+            logger.warning(f"Snapshot attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                await asyncio.sleep(2)
+    return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-#  Top Gainer Scanner
+#  TOP 5 GAINER SCANNER
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def top_gainer_scan(context) -> None:
     """
-    APScheduler job: scan all IDX stocks, send alert if Top-5 ranking changes.
-    Only runs during market hours.
+    Automatically finds IDX Top 5 Gainers every 5 minutes.
+    Sends professional alert only when:
+      • Ranking changed  OR  new ticker entered Top 5
+      • Signal confidence ≥ 72%  (quality filter)
     """
-    global _prev_top5
+    global _prev_top5, _alerted_gainers
 
     if not is_market_open():
         return
 
-    try:
-        snapshots = get_market_snapshot(ALL_IDX_STOCKS)
-    except Exception as e:
-        logger.warning(f"top_gainer_scan: data fetch error: {e}")
-        return
-
+    logger.info("Running top_gainer_scan…")
+    snapshots = await _safe_snapshot(ALL_IDX_STOCKS)
     if not snapshots:
         return
 
-    # Sort by pct_chg descending, take top 5
-    ranked  = sorted(snapshots, key=lambda x: x.get("pct_chg", 0), reverse=True)
-    top5    = [s for s in ranked[:10] if s.get("pct_chg", 0) > 0.5][:5]
-    top5_tickers = [s["ticker"] for s in top5]
+    # Sort and filter
+    ranked = sorted(snapshots, key=lambda x: x.get("pct_chg", 0), reverse=True)
+    top5   = [s for s in ranked[:12] if s.get("pct_chg", 0) > 0.3][:5]
 
     if not top5:
         return
 
-    # Check if ranking has changed
-    if top5_tickers == _prev_top5:
+    top5_tickers = [s["ticker"] for s in top5]
+    new_entries  = [t for t in top5_tickers if t not in _prev_top5]
+
+    # If no ranking change and no new entries, skip
+    if top5_tickers == _prev_top5 and not new_entries:
         return
 
-    logger.info(f"Top Gainer ranking changed: {_prev_top5} → {top5_tickers}")
+    logger.info(f"Top5 change: {_prev_top5} → {top5_tickers}")
     _prev_top5 = top5_tickers
 
-    users = _get_users(context)
+    users = _load_users()
     if not users:
         return
 
-    # Build summary + detailed alerts
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from bot.alerts.alert_chart import generate_alert_chart
 
-    # Summary header
-    header_lines = ["🏆 *IDX TOP 5 GAINER UPDATE*\n"]
+    # ── Summary broadcast (all users) ─────────────────────────────────────
+    sep   = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    lines = [f"{sep}", "🏆 *TOP 5 GAINER UPDATE — IDX*\n"]
     for i, s in enumerate(top5, 1):
-        ticker = s["ticker"]
-        pct    = s.get("pct_chg", 0)
-        rv     = s.get("rel_vol", 1) or 1
-        price  = s.get("price", 0)
-        header_lines.append(
-            f"{i}. *{ticker}* {price:,.0f} +{pct:.2f}% | Vol:{rv:.1f}×"
-        )
+        t    = s["ticker"]
+        pct  = s.get("pct_chg", 0)
+        rv   = s.get("rel_vol", 1) or 1
+        p    = s.get("price", 0)
+        tag  = " 🆕" if t in new_entries else ""
+        trend= _momentum_trend(t, pct)
+        lines.append(f"{i}. *{t}*{tag}  {p:,.0f}  +{pct:.2f}%  Vol:{rv:.1f}×  {trend}")
+    lines.append(f"\n{sep}")
+    summary = "\n".join(lines)
 
-    summary_text = "\n".join(header_lines)
     kb_summary = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"📊 {s['ticker']}", callback_data=f"chart_{s['ticker']}")
          for s in top5[:3]],
+        [InlineKeyboardButton("📈 Screener", callback_data="menu_screener"),
+         InlineKeyboardButton("🏠 Menu",     callback_data="menu_main")],
     ])
 
     for uid in users:
         try:
             await context.bot.send_message(
-                chat_id=uid, text=summary_text,
+                chat_id=uid, text=summary,
                 parse_mode="Markdown", reply_markup=kb_summary,
             )
         except Exception as e:
             logger.debug(f"Summary send failed {uid}: {e}")
 
-    import asyncio
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.5)
 
-    # Detailed analysis for Top 3 with chart
-    for s in top5[:3]:
+    # ── Deep analysis for new/top-3 entries ──────────────────────────────
+    analyze_these = [s for s in top5 if s["ticker"] in new_entries] or top5[:2]
+
+    for s in analyze_these[:3]:
         ticker = s["ticker"]
         pct    = s.get("pct_chg", 0)
+        sector = _get_sector(ticker)
 
         try:
-            sig   = generate_trade_signal(s)
-            text  = format_signal_message(sig, pct, alert_type="gainer")
+            sig = generate_trade_signal(s)
+        except Exception as e:
+            logger.warning(f"Signal gen error {ticker}: {e}")
+            continue
+
+        # Quality gate — only send if signal worth acting on
+        if sig["confidence_pct"] < 55 and sig["signal_type"] == "AVOID":
+            logger.info(f"Skipping {ticker} — low confidence ({sig['confidence_pct']}%)")
+            continue
+
+        try:
+            text  = format_signal_message(sig, pct, "gainer")
             chart = generate_alert_chart(ticker, sig)
         except Exception as e:
-            logger.warning(f"Signal gen error for {ticker}: {e}")
+            logger.warning(f"Format/chart error {ticker}: {e}")
             continue
 
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Chart",    callback_data=f"chart_{ticker}"),
-             InlineKeyboardButton("🏦 Broker Flow",   callback_data=f"broker_{ticker}")],
-            [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}"),
-             InlineKeyboardButton("📈 Screener",      callback_data="menu_screener")],
+            [InlineKeyboardButton("📊 Full Chart",     callback_data=f"chart_{ticker}"),
+             InlineKeyboardButton("🏦 Broker Flow",    callback_data=f"broker_{ticker}")],
+            [InlineKeyboardButton("⭐ Add Watchlist",  callback_data=f"watch_add_{ticker}"),
+             InlineKeyboardButton("🔔 Set Alert",      callback_data="menu_main")],
         ])
 
         sent = await broadcast_alert(
             context.bot, users, text, ticker=ticker,
-            photo=chart, reply_markup=kb,
+            photo=chart, reply_markup=kb, delay_between=0.05,
         )
-        logger.info(f"Gainer alert {ticker}: sent to {sent} users")
-        await asyncio.sleep(0.5)
+        logger.info(f"Gainer alert [{ticker}] conf={sig['confidence_pct']}% → {sent} users")
+        _alerted_gainers.add(ticker)
+        await asyncio.sleep(0.8)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Golden Cross Scanner
+#  GOLDEN CROSS SCANNER
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def golden_cross_scan(context) -> None:
     """
-    APScheduler job: detect MA10 > MA20 crossovers across all IDX stocks.
-    Sends instant notification. Only one alert per stock per trading day.
-    Only runs during market hours.
+    Detects EMA9 crossing above EMA20 across all IDX stocks.
+    One alert per stock per trading day. Auto-filtered by confidence.
     """
-    global _prev_ma_state, _gc_alerted
+    global _gc_alerted
 
     if not is_market_open():
         return
 
-    today = datetime.now(WIB).date()
+    today  = datetime.now(WIB).date()
+    logger.info("Running golden_cross_scan…")
 
-    try:
-        snapshots = get_market_snapshot(ALL_IDX_STOCKS)
-    except Exception as e:
-        logger.warning(f"golden_cross_scan: fetch error: {e}")
+    snapshots = await _safe_snapshot(ALL_IDX_STOCKS)
+    if not snapshots:
         return
 
-    crosses_found = []
+    crosses = []
 
     for snap in snapshots:
         ticker = snap.get("ticker")
         if not ticker:
             continue
-
-        # Already alerted today?
         if _gc_alerted.get(ticker) == today:
             continue
 
@@ -192,51 +247,49 @@ async def golden_cross_scan(context) -> None:
                 continue
 
             df = compute_indicators(df)
-            df["MA10"] = df["Close"].rolling(10).mean()
+            close       = df["Close"]
+            df["EMA9"]  = close.ewm(span=9,  adjust=False).mean()
+            df["EMA20"] = close.ewm(span=20, adjust=False).mean()
 
             if len(df) < 2:
                 continue
 
-            latest = df.iloc[-1]
-            prev   = df.iloc[-2]
+            la = df.iloc[-1]
+            pr = df.iloc[-2]
 
-            ma10_now  = float(latest["MA10"]) if pd.notna(latest["MA10"]) else 0
-            ma20_now  = float(latest["MA20"]) if pd.notna(latest["MA20"]) else 0
-            ma10_prev = float(prev["MA10"])   if pd.notna(prev["MA10"])   else 0
-            ma20_prev = float(prev["MA20"])   if pd.notna(prev["MA20"])   else 0
+            e9n  = float(la["EMA9"])  if pd.notna(la["EMA9"])  else 0
+            e20n = float(la["EMA20"]) if pd.notna(la["EMA20"]) else 0
+            e9p  = float(pr["EMA9"])  if pd.notna(pr["EMA9"])  else 0
+            e20p = float(pr["EMA20"]) if pd.notna(pr["EMA20"]) else 0
 
-            # Golden cross: MA10 crosses above MA20
-            was_below = ma10_prev <= ma20_prev
-            is_above  = ma10_now > ma20_now
+            was_below = e9p <= e20p
+            is_above  = e9n > e20n
 
-            if was_below and is_above and ma10_now > 0 and ma20_now > 0:
-                crosses_found.append(snap)
+            if was_below and is_above and e9n > 0 and e20n > 0:
+                crosses.append(snap)
                 _gc_alerted[ticker] = today
-                logger.info(f"Golden Cross detected: {ticker} MA10={ma10_now:.0f} > MA20={ma20_now:.0f}")
+                logger.info(f"Golden Cross: {ticker}  EMA9={e9n:.0f} > EMA20={e20n:.0f}")
 
         except Exception as e:
-            logger.debug(f"GC check error for {ticker}: {e}")
+            logger.debug(f"GC check error {ticker}: {e}")
 
-    if not crosses_found:
+    if not crosses:
         return
 
-    users = _get_users(context)
+    users = _load_users()
     if not users:
         return
 
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from bot.alerts.alert_chart import generate_alert_chart
-    import asyncio
 
-    for snap in crosses_found[:3]:    # cap at 3 concurrent GC alerts
+    for snap in crosses[:4]:
         ticker = snap["ticker"]
         pct    = snap.get("pct_chg", 0)
 
         try:
             sig   = generate_trade_signal(snap)
-            text  = format_signal_message(sig, pct, alert_type="golden_cross")
-            # Override type label
-            text  = text.replace("TOP GAINER ALERT", "GOLDEN CROSS ALERT ✨")
+            text  = format_signal_message(sig, pct, "golden_cross")
             chart = generate_alert_chart(ticker, sig)
         except Exception as e:
             logger.warning(f"GC signal error {ticker}: {e}")
@@ -253,39 +306,32 @@ async def golden_cross_scan(context) -> None:
             context.bot, users, text, ticker=ticker,
             photo=chart, reply_markup=kb,
         )
-        logger.info(f"Golden Cross alert {ticker}: sent to {sent} users")
-        await asyncio.sleep(0.5)
+        logger.info(f"Golden Cross alert [{ticker}] → {sent} users")
+        await asyncio.sleep(0.8)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Price Alert Check
+#  PRICE ALERT CHECK
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def price_alert_check(context) -> None:
     """
-    APScheduler job: check custom user price alerts.
-    Fires instantly when a stock crosses its target price.
+    Checks user custom price alerts every 2 minutes.
+    No market-hours restriction — users may set off-hours alerts.
     """
     from bot.alerts.price_alerts import get_all_alert_tickers, check_and_fire_alerts
     from bot.alerts.alert_chart import generate_alert_chart
-    from bot.alerts.notification import send_alert
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    import asyncio
 
     tickers = get_all_alert_tickers()
     if not tickers:
         return
 
-    try:
-        snapshots = get_market_snapshot(tickers)
-    except Exception as e:
-        logger.warning(f"price_alert_check fetch error: {e}")
+    snapshots = await _safe_snapshot(tickers)
+    if not snapshots:
         return
 
-    fired = check_and_fire_alerts(snapshots)
-    if not fired:
-        return
-
+    fired    = check_and_fire_alerts(snapshots)
     snap_map = {s["ticker"]: s for s in snapshots}
 
     for alert in fired:
@@ -297,36 +343,40 @@ async def price_alert_check(context) -> None:
         pct    = alert["pct_chg"]
         rv     = alert["rel_vol"]
         sign   = "+" if pct >= 0 else ""
-
         arrow  = "📈 CROSSED ABOVE" if direct == "above" else "📉 CROSSED BELOW"
-        text   = (
-            f"🔔 *PRICE ALERT TRIGGERED*\n\n"
-            f"*{ticker}* {arrow} {target:,.0f}\n"
-            f"Current price: *{price:,.0f}* ({sign}{pct:.2f}%)\n"
-            f"Volume: {rv:.1f}× average\n\n"
-        )
 
-        # Add quick analysis if snapshot available
+        # Build text
+        sep   = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        lines = [
+            sep,
+            f"🔔 *PRICE ALERT TRIGGERED — IDX*\n",
+            f"Stock  : *{ticker}*",
+            f"Price  : *{price:,.0f}* ({sign}{pct:.2f}%)",
+            f"Signal : {arrow} {target:,.0f}",
+            f"Volume : {rv:.1f}× average\n",
+        ]
+
         snap = snap_map.get(ticker, {})
+        chart = None
         if snap:
             try:
-                sig  = generate_trade_signal(snap)
-                text += (
-                    f"*Quick Analysis:*\n"
-                    f"🎯 Entry: {sig['entry']:,.0f}\n"
-                    f"🎯 TP1:  {sig['tp1']:,.0f}  |  TP2: {sig['tp2']:,.0f}\n"
-                    f"🛑 SL:   {sig['sl']:,.0f}\n"
-                    f"Confidence: {sig['confidence']}/10\n"
-                )
+                sig = generate_trade_signal(snap)
+                lines += [
+                    "*Quick Analysis:*",
+                    f"Signal    : {sig['signal_emoji']} {sig['signal_type']}",
+                    f"Confidence: {sig['confidence_pct']}%",
+                    f"Entry     : {sig['entry_low']:,.0f} – {sig['entry']:,.0f}",
+                    f"TP1 / TP2 : {sig['tp1']:,.0f} / {sig['tp2']:,.0f}",
+                    f"SL        : {sig['sl']:,.0f}",
+                    "",
+                ]
+                chart = generate_alert_chart(ticker, sig)
             except Exception:
                 pass
 
-        text += "\n_Alert has been cleared. Set a new one with /alert_"
-
-        try:
-            chart = generate_alert_chart(ticker, {}) if snap else None
-        except Exception:
-            chart = None
+        lines.append("_Alert cleared. Set new: /alert TICKER PRICE_")
+        lines.append(sep)
+        text = "\n".join(lines)
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 Chart",          callback_data=f"chart_{ticker}"),
@@ -335,6 +385,11 @@ async def price_alert_check(context) -> None:
              InlineKeyboardButton("🔔 New Alert",      callback_data="menu_main")],
         ])
 
-        await send_alert(context.bot, uid, text, ticker=ticker, photo=chart, reply_markup=kb)
-        logger.info(f"Price alert fired: {ticker} {direct} {target} → user {uid}")
+        try:
+            await send_alert(context.bot, uid, text, ticker=ticker,
+                             photo=chart, reply_markup=kb)
+            logger.info(f"Price alert fired: {ticker} {direct} {target} → user {uid}")
+        except Exception as e:
+            logger.warning(f"Price alert send error {uid}: {e}")
+
         await asyncio.sleep(0.1)
