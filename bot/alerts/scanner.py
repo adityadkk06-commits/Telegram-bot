@@ -47,14 +47,56 @@ _momentum_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=3))
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_users() -> list[int]:
-    path = os.path.join(os.path.dirname(__file__), "..", "data", "users.json")
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path) as f:
-            return list(set(json.load(f)))
-    except Exception:
-        return []
+    """
+    Load all registered user IDs from EVERY available data source.
+    Merges users.json + watchlists.json + price_alerts.json so that
+    alerts are never silently dropped after a bot restart.
+    """
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    users: set[int] = set()
+
+    # Primary source: users.json
+    p1 = os.path.join(data_dir, "users.json")
+    if os.path.exists(p1):
+        try:
+            with open(p1) as f:
+                for uid in json.load(f):
+                    try:
+                        users.add(int(uid))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+
+    # Fallback 1: watchlists.json (keys are str(user_id))
+    p2 = os.path.join(data_dir, "watchlists.json")
+    if os.path.exists(p2):
+        try:
+            with open(p2) as f:
+                for uid_str in json.load(f).keys():
+                    try:
+                        users.add(int(uid_str))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+
+    # Fallback 2: price_alerts.json (keys are str(user_id))
+    p3 = os.path.join(data_dir, "price_alerts.json")
+    if os.path.exists(p3):
+        try:
+            with open(p3) as f:
+                for uid_str in json.load(f).keys():
+                    try:
+                        users.add(int(uid_str))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+
+    if not users:
+        logger.warning("_load_users: no registered users found in any data source")
+    return list(users)
 
 
 def _get_sector(ticker: str) -> str:

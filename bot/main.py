@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 WIB = pytz.timezone("Asia/Jakarta")
 KNOWN_TICKERS = set(ALL_IDX_STOCKS)
 
-# File for registered users (anyone who /start-ed)
+# File for registered users (anyone who /start-ed or interacted)
 USERS_FILE = os.path.join(os.path.dirname(__file__), "data", "users.json")
+DATA_DIR   = os.path.join(os.path.dirname(__file__), "data")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  User registry
+#  User registry  (persistent across restarts)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_users() -> set:
@@ -50,20 +51,82 @@ def _load_users() -> set:
 
 
 def _save_users(users: set):
-    os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
     with open(USERS_FILE, "w") as f:
         json.dump(list(users), f)
 
 
 def _register_user(user_id: int):
+    """Add user to persistent registry. No-op if already registered."""
+    if not user_id:
+        return
     users = _load_users()
     if user_id not in users:
         users.add(user_id)
         _save_users(users)
+        logger.info(f"Registered new user: {user_id} (total: {len(users)})")
+
+
+def _seed_users_from_all_sources():
+    """
+    At startup: recover all known user IDs from watchlists.json and
+    price_alerts.json so that users.json is never empty after a restart,
+    even if nobody re-sends /start.
+    """
+    recovered = set()
+
+    # From watchlists.json
+    wl_path = os.path.join(DATA_DIR, "watchlists.json")
+    if os.path.exists(wl_path):
+        try:
+            with open(wl_path) as f:
+                data = json.load(f)
+            for uid_str in data.keys():
+                try:
+                    recovered.add(int(uid_str))
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+
+    # From price_alerts.json
+    pa_path = os.path.join(DATA_DIR, "price_alerts.json")
+    if os.path.exists(pa_path):
+        try:
+            with open(pa_path) as f:
+                data = json.load(f)
+            for uid_str in data.keys():
+                try:
+                    recovered.add(int(uid_str))
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+
+    if recovered:
+        existing = _load_users()
+        combined = existing | recovered
+        if len(combined) > len(existing):
+            _save_users(combined)
+            logger.info(f"Seeded {len(combined - existing)} user(s) from existing data "
+                        f"— total registered: {len(combined)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Patched /start that registers users
+#  Auto-register on EVERY interaction (message or callback)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def auto_register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Fires on every incoming message/callback (group=-1, before all other handlers).
+    Silently registers the user so alerts always have a target audience.
+    """
+    if update.effective_user:
+        _register_user(update.effective_user.id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Patched /start that also registers users
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def cmd_start_patched(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -369,7 +432,14 @@ def build_app() -> Application:
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set!")
 
+    # Recover users from watchlists/price_alerts on every restart
+    _seed_users_from_all_sources()
+
     app = Application.builder().token(token).build()
+
+    # Auto-register every user who interacts (group=-1 fires before all others)
+    app.add_handler(MessageHandler(filters.ALL, auto_register_handler), group=-1)
+    app.add_handler(CallbackQueryHandler(auto_register_handler),        group=-1)
 
     # Standard commands
     app.add_handler(CommandHandler("start",     cmd_start_patched))
