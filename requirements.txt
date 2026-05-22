@@ -1,0 +1,15 @@
+python-telegram-bot==20.7
+requests
+pandas
+numpy
+matplotlib
+mplfinance
+yfinance
+beautifulsoup4
+lxml
+ta
+schedule
+pytz
+aiohttp
+scipy
+cloudscraper
