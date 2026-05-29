@@ -166,8 +166,8 @@ async def top_gainer_scan(context) -> None:
     new_entries  = [t for t in top5_tickers if t not in _prev_top5]
 
     # If no ranking change and no new entries, skip
-    if top5_tickers == _prev_top5 and not new_entries:
-        return
+    # if top5_tickers == _prev_top5 and not new_entries:
+    #     return
 
     logger.info(f"Top5 change: {_prev_top5} → {top5_tickers}")
     _prev_top5 = top5_tickers
