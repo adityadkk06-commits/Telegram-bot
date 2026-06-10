@@ -1,0 +1,19 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify on deploy
+        run: |
+          echo "✅ Code pushed to ${{ github.ref_name }} by ${{ github.actor }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Message: ${{ github.event.head_commit.message }}"
