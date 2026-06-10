@@ -1,0 +1,74 @@
+name: IDX Market Scan
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Runs every 15 minutes during IDX market hours:
+#    09:00 – 15:45 WIB  (02:00 – 08:45 UTC)  Monday – Friday
+#
+#  No always-on server required. Each run:
+#    1. Installs Python deps
+#    2. Fetches live IDX snapshots (via yfinance)
+#    3. Runs Top Gainers + Top Scalping + Golden Cross scanners
+#    4. Generates trade signals (11-factor engine)
+#    5. Sends alerts directly to Telegram
+#    6. Exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Every 15 min, 02:00–08:45 UTC = 09:00–15:45 WIB, Mon–Fri
+    - cron: '*/15 2-8 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Set to "true" for verbose debug output'
+        required: false
+        default: 'false'
+
+jobs:
+  scan:
+    name: IDX Market Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 13   # stays under the 15-min window
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        run: |
+          echo "Installing dependencies via uv…"
+          uv sync
+          echo "Dependencies installed."
+
+      - name: Run IDX Market Scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== IDX MARKET SCAN ==="
+          echo "UTC time  : $(date -u)"
+          echo "WIB time  : $(TZ='Asia/Jakarta' date)"
+          echo "Run ID    : ${{ github.run_id }}"
+          echo "Trigger   : ${{ github.event_name }}"
+          echo ""
+          uv run python -m bot.run_scan
+          echo ""
+          echo "=== SCAN FINISHED ==="
+
+      - name: Upload scan log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-failure-log-${{ github.run_id }}
+          path: /tmp/*.log
+          retention-days: 7
