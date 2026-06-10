@@ -1,0 +1,349 @@
+FULL AUDIT REQUIRED – IDX STOCK SCREENER, SECTOR ROTATION, HEATMAP, MARKET DATA, AND TELEGRAM OUTPUT VALIDATION
+
+The Telegram bot outputs do not match actual IDX market conditions.
+
+Evidence:
+
+Telegram Output:
+- Banking +4.13%
+- Technology +4.13%
+- Energy +4.13%
+- Plantation +4.13%
+- Mining +4.13%
+- Retail +4.13%
+
+Real Market Data:
+- Finance +2.42%
+- Technology +4.37%
+- Energy +1.73%
+- Property +3.39%
+- Industrial +2.78%
+- Transport +4.51%
+
+This indicates a serious calculation, aggregation, mapping, caching, ranking, or data-source issue.
+
+═══════════════════════════════
+PHASE 1 — COMPLETE SYSTEM AUDIT
+═══════════════════════════════
+
+Audit every module involved in:
+
+1. Market Data Collection
+   - Verify all data sources.
+   - Detect stale data.
+   - Detect delayed data.
+   - Detect missing data.
+   - Detect duplicated data.
+   - Verify timestamps.
+   - Verify price accuracy.
+   - Verify volume accuracy.
+   - Verify percentage change calculations.
+
+2. Sector Classification
+   - Verify ticker-to-sector mapping.
+   - Detect duplicate mappings.
+   - Detect missing mappings.
+   - Validate against official IDX sector classifications.
+
+3. Screener Engine
+   - Verify all calculations.
+   - Verify ranking logic.
+   - Verify momentum scoring.
+   - Verify volume calculations.
+   - Verify signal generation.
+
+4. Sector Rotation Engine
+   - Verify strongest sector ranking.
+   - Verify weakest sector ranking.
+   - Verify sector score calculations.
+   - Verify rotation signals.
+   - Verify candidate selection logic.
+
+5. Heatmap Generator
+   - Verify heatmap uses correct market data.
+   - Verify displayed sectors match actual sector constituents.
+   - Verify color scale reflects actual returns.
+   - Verify sector aggregation logic.
+
+6. AI Analysis Module
+   - Verify AI summaries use calculated values.
+   - Detect hardcoded values.
+   - Detect fallback values.
+   - Detect reused variables.
+
+7. Telegram Message Builder
+   - Verify displayed values come from latest calculations.
+   - Verify no stale values are reused.
+   - Verify all rankings match actual calculations.
+
+═══════════════════════════════
+PHASE 2 — REAL MARKET DATA UPGRADE
+═══════════════════════════════
+
+Current implementation appears to rely heavily on Yahoo Finance (yfinance).
+
+This is NOT acceptable as the sole data source for an IDX professional screening system.
+
+Audit all market data sources and upgrade the architecture.
+
+Priority Order:
+
+1. Official IDX data
+2. TradingView market data
+3. RTI Business data
+4. Stockbit-compatible market structure
+5. Other reliable IDX market providers
+6. Yahoo Finance ONLY as fallback
+
+Requirements:
+
+- Do not rely on a single source.
+- Implement source validation.
+- Implement cross-source comparison.
+- Detect stale market data.
+- Detect delayed market data.
+- Detect missing ticker data.
+- Detect incorrect volume data.
+- Detect incorrect percentage change data.
+
+For every ticker collect:
+
+- Symbol
+- Last Price
+- Previous Close
+- Daily Change %
+- Volume
+- Value
+- Sector
+- Industry
+- Timestamp
+- Data Source
+
+For every sector calculate:
+
+- Equal-weight return
+- Market-cap weighted return
+- Volume-weighted return
+
+Implement:
+
+- Primary source
+- Secondary source
+- Automatic failover
+- Source reliability ranking
+
+If primary source fails:
+
+- Switch automatically to backup source.
+- Log failover event.
+
+Add validation checks:
+
+If data from Yahoo Finance differs significantly from primary IDX source:
+
+- Raise warning.
+- Use primary source.
+- Log discrepancy.
+
+Generate:
+
+- Source reliability report
+- Data freshness report
+- Data consistency report
+
+Goal:
+
+Use real IDX market data as the primary source and use Yahoo Finance only as a fallback source.
+
+═══════════════════════════════
+PHASE 3 — ROOT CAUSE ANALYSIS
+═══════════════════════════════
+
+Identify:
+
+- Exact file(s) causing the issue.
+- Exact function(s) causing the issue.
+- Exact line(s) causing the issue.
+- Why nearly all sectors display identical values.
+- Why rankings differ from actual market conditions.
+- Why heatmap and sector rotation may disagree.
+- Why Telegram output differs from real market data.
+
+If all sector returns are identical or suspiciously close:
+
+Raise:
+
+SECTOR CALCULATION ERROR POSSIBLE
+
+═══════════════════════════════
+PHASE 4 — DEBUG OUTPUT
+═══════════════════════════════
+
+Add detailed logs.
+
+For each sector print:
+
+- Sector Name
+- Number of Stocks
+- Average Return
+- Weighted Return
+- Median Return
+- Market Cap Weighted Return
+- Volume Weighted Return
+- Top 5 Gainers
+- Top 5 Losers
+- Average Volume Ratio
+- Sector Score
+
+Print:
+
+- Raw market data
+- Raw sector dataframe
+- Aggregated sector dataframe
+- Final ranking dataframe
+- Final Telegram payload
+
+Print source information:
+
+[DATA SOURCE]
+Ticker:
+Sector:
+Source:
+Price:
+Volume:
+Timestamp:
+
+═══════════════════════════════
+PHASE 5 — REAL MARKET VALIDATION
+═══════════════════════════════
+
+Compare calculated values against real market conditions.
+
+Validate:
+
+- Finance
+- Technology
+- Energy
+- Property
+- Industrial
+- Transport
+- Healthcare
+- Consumer
+- Basic Materials
+- Infrastructure
+
+Verify:
+
+- Sector rankings
+- Sector returns
+- Sector leaders
+- Sector laggards
+
+Ensure values are realistic and not duplicated.
+
+═══════════════════════════════
+PHASE 6 — FIX IMPLEMENTATION
+═══════════════════════════════
+
+Implement all required fixes.
+
+You are authorized to:
+
+- Modify code
+- Refactor code
+- Create new files
+- Delete obsolete files
+- Replace broken logic
+- Improve calculations
+- Improve data validation
+- Improve data architecture
+
+Do not stop after identifying the issue.
+
+Fix the issue completely.
+
+═══════════════════════════════
+PHASE 7 — AUTOMATED TESTING
+═══════════════════════════════
+
+Run:
+
+- Syntax checks
+- Unit tests
+- Data validation tests
+- Sector calculation tests
+- Heatmap generation tests
+- Telegram output tests
+- Source failover tests
+
+Verify:
+
+- No Python exceptions
+- No duplicated sector values
+- No stale cache issues
+- No ranking anomalies
+- No invalid market data
+
+═══════════════════════════════
+PHASE 8 — GITHUB DEPLOYMENT
+═══════════════════════════════
+
+After fixing:
+
+1. Commit all changes.
+
+2. Push directly to GitHub repository.
+
+3. Do not leave fixes only in local workspace.
+
+Use a descriptive commit message such as:
+
+fix(sector-rotation): correct sector aggregation, real market validation, and heatmap calculations
+
+═══════════════════════════════
+PHASE 9 — GITHUB ACTIONS VALIDATION
+═══════════════════════════════
+
+After push:
+
+- Trigger GitHub Actions workflow.
+- Verify workflow completes successfully.
+- Verify no runtime errors.
+- Verify Telegram delivery succeeds.
+- Verify heatmap generation succeeds.
+- Verify sector rotation generation succeeds.
+- Verify screener generation succeeds.
+- Verify real market data validation succeeds.
+
+═══════════════════════════════
+PHASE 10 — FINAL REPORT
+═══════════════════════════════
+
+Provide:
+
+1. Root cause summary.
+2. Exact files modified.
+3. Exact functions modified.
+4. Exact lines modified.
+5. Before vs after calculations.
+6. Market data source comparison.
+7. Data reliability report.
+8. Validation output.
+9. GitHub commit hash.
+10. GitHub Actions run result.
+11. Telegram output verification.
+12. Heatmap verification.
+13. Sector Rotation verification.
+14. Screener verification.
+
+Task is NOT complete until:
+
+- Issue is fixed.
+- Real market data is validated.
+- Sector Rotation matches real market behavior.
+- Heatmap matches real market behavior.
+- Screener output is accurate.
+- Code is committed.
+- Code is pushed to GitHub.
+- GitHub Actions passes successfully.
+- Telegram output is verified against actual market conditions.

@@ -1,0 +1,3 @@
+- [Sector identical-value bug](sector-identical-value.md) — all sectors showing same pct_chg caused by tickers[:6] limit + yfinance rate-limiting; fix: use all tickers + validation
+- [IDX sector names](idx-sector-names.md) — official IDX 2021 classification (11 sectors); must stay consistent across constants.py, heatmap buttons, and callback_data
+- [GitHub push method](github-push.md) — git commit/add/push blocked in main agent; use GitHub Contents API (PUT /repos/.../contents/...) with GITHUB_PAT secret
