@@ -306,6 +306,8 @@ def format_signal_message(sig: dict, pct_chg: float = 0,
         header = "✨ GOLDEN CROSS ALERT"
     elif alert_type == "price_alert":
         header = "🔔 PRICE ALERT TRIGGERED"
+    elif alert_type == "top_scalping":
+        header = "⚡ TOP SCALPING ALERT"
     else:
         header = "🔥 TOP GAINER ALERT"
 

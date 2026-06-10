@@ -40,6 +40,7 @@ _prev_top5: list[str] = []          # last known Top-5 tickers
 _alerted_gainers: set[str] = set()  # tickers already alerted this session
 _gc_alerted: dict[str, date] = {}   # golden cross alerted: ticker → date
 _momentum_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=3))
+_scalp_alerted: dict[str, date] = {}  # top-scalping alerted: ticker → date
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,6 +350,111 @@ async def golden_cross_scan(context) -> None:
             photo=chart, reply_markup=kb,
         )
         logger.info(f"Golden Cross alert [{ticker}] → {sent} users")
+        await asyncio.sleep(0.8)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TOP SCALPING SCANNER  (additional trigger source — does NOT replace any
+#  existing alert logic.  Expands the stock universe eligible for Auto Alerts.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def top_scalping_scan(context) -> None:
+    """
+    Additional Auto Alert trigger: "Top Scalping" filter set.
+
+    Criteria (ALL must pass):
+      • Price  < 500
+      • 1-Day Return (%) ≥ 3
+      • Volume > 500,000
+      • Value  > 5,000,000,000
+      • Price  > MA5
+      • Frequency > 3,000  (skipped gracefully if not in snapshot data)
+
+    One alert per ticker per trading day.
+    All existing alert categories, scoring, and notifications are unchanged —
+    this function only adds new stocks to the alert universe.
+    """
+    global _scalp_alerted
+
+    if not is_market_open():
+        return
+
+    today = datetime.now(WIB).date()
+    logger.info("Running top_scalping_scan…")
+
+    snapshots = await _safe_snapshot(ALL_IDX_STOCKS)
+    if not snapshots:
+        return
+
+    candidates = []
+    for snap in snapshots:
+        ticker = snap.get("ticker")
+        if not ticker:
+            continue
+
+        # Skip if already alerted today
+        if _scalp_alerted.get(ticker) == today:
+            continue
+
+        price   = float(snap.get("price",   0) or 0)
+        pct_chg = float(snap.get("pct_chg", 0) or 0)
+        volume  = float(snap.get("volume",  0) or 0)
+        value   = float(snap.get("value",   0) or 0)
+        ma5     = snap.get("ma5")
+        freq    = snap.get("frequency")          # None when yfinance data used
+
+        # Apply filters
+        if price  <= 0 or price  >= 500:         continue
+        if pct_chg < 3:                           continue
+        if volume  <= 500_000:                    continue
+        if value   <= 5_000_000_000:              continue
+        if ma5 is not None and price <= float(ma5): continue
+        if freq is not None and float(freq) <= 3_000: continue
+
+        candidates.append(snap)
+
+    if not candidates:
+        logger.info("top_scalping_scan: no candidates this cycle")
+        return
+
+    # Sort by value desc so the highest-liquidity stocks alert first
+    candidates.sort(key=lambda x: x.get("value", 0), reverse=True)
+
+    users = _load_users()
+    if not users:
+        return
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from bot.alerts.alert_chart import generate_alert_chart
+
+    for snap in candidates[:4]:   # cap at 4 per cycle to avoid flooding
+        ticker = snap["ticker"]
+        pct    = snap.get("pct_chg", 0)
+
+        try:
+            sig   = generate_trade_signal(snap)
+            text  = format_signal_message(sig, pct, "top_scalping")
+            chart = generate_alert_chart(ticker, sig)
+        except Exception as e:
+            logger.warning(f"Scalp signal error {ticker}: {e}")
+            continue
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Full Chart",    callback_data=f"chart_{ticker}"),
+             InlineKeyboardButton("🏦 Broker Flow",   callback_data=f"broker_{ticker}")],
+            [InlineKeyboardButton("⭐ Add Watchlist", callback_data=f"watch_add_{ticker}"),
+             InlineKeyboardButton("🏠 Menu",          callback_data="menu_main")],
+        ])
+
+        sent = await broadcast_alert(
+            context.bot, users, text, ticker=ticker,
+            photo=chart, reply_markup=kb, delay_between=0.05,
+        )
+        logger.info(
+            f"Scalping alert [{ticker}] pct={pct:.1f}% "
+            f"conf={sig['confidence_pct']}% → {sent} users"
+        )
+        _scalp_alerted[ticker] = today
         await asyncio.sleep(0.8)
 
 

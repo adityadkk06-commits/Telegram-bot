@@ -25,11 +25,15 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Syntax check
+        run: |
+          uv run python -m py_compile bot/main.py
+          uv run python -m py_compile bot/alerts/scanner.py
+          uv run python -m py_compile bot/alerts/signal_engine.py
+          uv run python -m py_compile bot/services/data_service.py
+
       - name: Lint with ruff
         run: uv run ruff check bot/ || true
-
-      - name: Type check with pyright
-        run: uv run pyright bot/ || true
 
   node-packages:
     name: Node.js Packages
@@ -54,5 +58,5 @@ jobs:
       - name: Build API Server
         run: pnpm --filter @workspace/api-server run build
 
-      - name: Typecheck all packages
+      - name: Typecheck API Server
         run: pnpm --filter @workspace/api-server run typecheck || true

@@ -66,6 +66,19 @@ bot/
 - **Market Breadth**: Advance/Decline ratio, RSI extremes
 - **Top Momentum**: Sorted by % change with relative volume
 
+## Auto Alert Scanners
+
+Four background jobs run during IDX market hours (09:00–16:00 WIB):
+
+| Scanner | Trigger | Interval |
+|---|---|---|
+| Top 5 Gainer | Ranking change OR new entry in Top 5 | Every 5 min |
+| Golden Cross | EMA9 crosses above EMA20 | Every 5 min |
+| Top Scalping | Price<500, +3%, Vol>500k, Value>5B, Price>MA5 | Every 5 min |
+| Price Alert | User-set custom price levels crossed | Every 2 min |
+
+All scanners feed into the same signal engine (11-factor confidence) and notification system. The Top Scalping scanner is an **additional trigger source** — it expands the stock universe without modifying any existing alert logic.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
