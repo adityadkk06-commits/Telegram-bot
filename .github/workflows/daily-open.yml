@@ -1,0 +1,61 @@
+name: IDX Daily Open Summary
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Runs once at market open: 09:00 WIB (02:00 UTC) every weekday.
+#
+#  Sends a morning briefing to Telegram:
+#    • IHSG status + trend
+#    • Previous day's Top 5 Gainers & Top 5 Losers
+#    • Today's Watchlist Candidates (uptrend + healthy volume)
+#    • Market session timing reminder
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # 02:00 UTC = 09:00 WIB, Mon–Fri
+    - cron: '0 2 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  daily-open:
+    name: Daily Market Open Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Send daily market open summary
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "=== IDX DAILY OPEN SUMMARY ==="
+          echo "UTC  : $(date -u)"
+          echo "WIB  : $(TZ='Asia/Jakarta' date)"
+          echo ""
+          uv run python -m bot.run_daily_open
+          echo ""
+          echo "=== DONE ==="
+
+      - name: Upload log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-open-failure-${{ github.run_id }}
+          path: /tmp/*.log
+          retention-days: 7

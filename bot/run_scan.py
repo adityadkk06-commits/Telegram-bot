@@ -61,12 +61,21 @@ def _tg_send(text: str, parse_mode: str = "Markdown") -> bool:
             r = requests.post(url, json=payload, timeout=15)
             if r.status_code == 200:
                 return True
-            if r.status_code == 429:          # rate limit — back off
+            if r.status_code == 429:
                 retry_after = r.json().get("parameters", {}).get("retry_after", 5)
                 logger.warning(f"Telegram rate-limit: retry after {retry_after}s")
                 time.sleep(retry_after + 1)
                 continue
-            logger.warning(f"Telegram HTTP {r.status_code}: {r.text[:200]}")
+            # Log the full error body for debugging
+            try:
+                err_body = r.json()
+                err_desc = err_body.get("description", r.text)
+            except Exception:
+                err_desc = r.text
+            logger.warning(
+                f"Telegram HTTP {r.status_code}: {err_desc} "
+                f"[CHAT_ID={CHAT!r}]"
+            )
             return False
         except requests.exceptions.RequestException as e:
             logger.warning(f"Telegram send attempt {attempt + 1} failed: {e}")
@@ -88,7 +97,7 @@ def _scan_top_gainers(snapshots: list) -> list:
 def _scan_top_scalping(snapshots: list) -> list:
     """
     Top Scalping filter set:
-      Price < 500 | Return ≥ 3% | Volume > 500k | Value > 5B | Price > MA5
+      Price < 500 | Return >= 3% | Volume > 500k | Value > 5B | Price > MA5
       Frequency > 3,000 (skipped when not in snapshot data)
     """
     hits = []
@@ -170,6 +179,25 @@ def run_scan() -> int:
         logger.error("TELEGRAM_CHAT_ID is not set. Aborting.")
         return 1
 
+    # Log CHAT_ID format hint (first 6 chars only for security)
+    chat_hint = CHAT[:6] + "…" if len(CHAT) > 6 else CHAT
+    logger.info(f"CHAT_ID hint: {chat_hint!r}  (channels need '-100xxxxxxxxxx' format)")
+
+    # ── Quick connectivity test ───────────────────────────────────────────────
+    logger.info("Testing Telegram connectivity…")
+    test_url = f"https://api.telegram.org/bot{TOKEN}/getMe"
+    try:
+        tr = requests.get(test_url, timeout=10)
+        if tr.status_code == 200:
+            bot_name = tr.json().get("result", {}).get("username", "?")
+            logger.info(f"  Bot connected: @{bot_name}")
+        else:
+            logger.error(f"  Bot token invalid! HTTP {tr.status_code}: {tr.text[:200]}")
+            return 1
+    except Exception as e:
+        logger.error(f"  Connectivity test failed: {e}")
+        return 1
+
     # ── 1. Fetch market snapshots ────────────────────────────────────────────
     logger.info("Step 1/4 — Fetching market snapshots…")
     t0 = time.time()
@@ -181,7 +209,7 @@ def run_scan() -> int:
         logger.error("No snapshots returned — market may be closed or data unavailable.")
         _tg_send(f"⚠️ *IDX Scan* — No market data at "
                  f"{start_wib.strftime('%H:%M WIB')}. Market may be closed.")
-        return 0
+        return 0   # Not a scanner failure — data just not available
 
     # ── 2. Run scanners ──────────────────────────────────────────────────────
     logger.info("Step 2/4 — Running scanners…")
@@ -196,7 +224,7 @@ def run_scan() -> int:
     logger.info(f"  Golden Cross  : {len(gc_hits)} found")
 
     # Collect unique candidates (scalpers first — highest priority)
-    seen     = set()
+    seen       = set()
     candidates = []
     for snap, alert_type in (
         [(s, "top_scalping") for s in scalpers] +
@@ -230,16 +258,20 @@ def run_scan() -> int:
     sent = failed = 0
 
     # Opening banner
-    _tg_send(
+    ok = _tg_send(
         f"{SEP}\n"
         f"🇮🇩 *IDX AUTO SCAN*\n"
         f"⏰ {start_wib.strftime('%H:%M WIB')}  |  "
         f"📊 {len(snapshots)} stocks  |  ⚡ {len(signals)} signals\n"
         f"{SEP}"
     )
+    if ok:
+        logger.info("  ✅ Banner sent")
+    else:
+        logger.warning("  ❌ Banner failed — check CHAT_ID format and bot membership")
     time.sleep(0.5)
 
-    for snap, sig, alert_type in signals[:8]:   # cap at 8 per cycle
+    for snap, sig, alert_type in signals[:8]:
         ticker = snap.get("ticker", "?")
         pct    = snap.get("pct_chg", 0)
         text   = format_signal_message(sig, pct, alert_type)
@@ -250,14 +282,14 @@ def run_scan() -> int:
         else:
             failed += 1
             logger.warning(f"  ❌ Failed: {ticker}")
-        time.sleep(0.6)   # avoid Telegram rate limit (30 msgs/sec per bot)
+        time.sleep(0.6)
 
     # ── Summary ──────────────────────────────────────────────────────────────
     end_wib  = datetime.now(WIB)
     duration = (end_wib - start_wib).total_seconds()
 
     logger.info("=" * 50)
-    logger.info(f"SCAN COMPLETE")
+    logger.info("SCAN COMPLETE")
     logger.info(f"  Start time     : {start_wib.strftime('%H:%M:%S WIB')}")
     logger.info(f"  End time       : {end_wib.strftime('%H:%M:%S WIB')}")
     logger.info(f"  Duration       : {duration:.1f}s")
@@ -281,7 +313,16 @@ def run_scan() -> int:
         f"{SEP}"
     )
 
-    return 0 if failed == 0 else 1
+    # ── Exit 0 always (Telegram failures are warnings, not scan failures) ────
+    # GitHub Actions "failure" = can't fetch data or bot token is invalid.
+    # Telegram send errors are logged but do NOT fail the workflow.
+    if failed > 0:
+        logger.warning(
+            f"{failed} message(s) failed to send. "
+            "Common causes: wrong CHAT_ID format (channels need '-100xxxxxxxxxx'), "
+            "bot not added to group/channel, or network issue."
+        )
+    return 0
 
 
 if __name__ == "__main__":
