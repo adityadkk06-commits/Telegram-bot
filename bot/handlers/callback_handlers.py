@@ -376,16 +376,19 @@ async def _cb_heatmap(query, sector):
     from bot.heatmap.heatmap_generator import generate_heatmap
     buf = generate_heatmap(sector)
     kb  = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏦 Banking",     callback_data="heatmap_Banking"),
-         InlineKeyboardButton("💻 Tech",        callback_data="heatmap_Technology")],
-        [InlineKeyboardButton("⚡ Energy",      callback_data="heatmap_Energy"),
-         InlineKeyboardButton("🛒 Consumer",    callback_data="heatmap_Consumer")],
-        [InlineKeyboardButton("🏥 Healthcare",  callback_data="heatmap_Healthcare"),
-         InlineKeyboardButton("🏠 Property",    callback_data="heatmap_Property")],
-        [InlineKeyboardButton("🏭 Industrial",  callback_data="heatmap_Industrial"),
-         InlineKeyboardButton("🌴 Plantation",  callback_data="heatmap_Plantation")],
-        [InlineKeyboardButton("🔄 All Sectors", callback_data="heatmap_all"),
-         InlineKeyboardButton("🏠 Menu",        callback_data="menu_main")],
+        [InlineKeyboardButton("🏦 Finance",      callback_data="heatmap_Finance"),
+         InlineKeyboardButton("💻 Technology",   callback_data="heatmap_Technology")],
+        [InlineKeyboardButton("⚡ Energy",       callback_data="heatmap_Energy"),
+         InlineKeyboardButton("⛏️ Materials",    callback_data="heatmap_Basic Materials")],
+        [InlineKeyboardButton("🛍️ Staples",     callback_data="heatmap_Consumer Staples"),
+         InlineKeyboardButton("🛒 Cyclicals",    callback_data="heatmap_Consumer Cyclicals")],
+        [InlineKeyboardButton("🏥 Healthcare",   callback_data="heatmap_Healthcare"),
+         InlineKeyboardButton("🏠 Property",     callback_data="heatmap_Property")],
+        [InlineKeyboardButton("🏭 Industrials",  callback_data="heatmap_Industrials"),
+         InlineKeyboardButton("🛣️ Infra",        callback_data="heatmap_Infrastructure")],
+        [InlineKeyboardButton("🚢 Transport",    callback_data="heatmap_Transportation"),
+         InlineKeyboardButton("🔄 All Sectors",  callback_data="heatmap_all")],
+        [InlineKeyboardButton("🏠 Menu",         callback_data="menu_main")],
     ])
     label = sector if sector else "All Sectors"
     if buf:
