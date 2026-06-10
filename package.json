@@ -1,0 +1,12 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "typecheck:libs": "pnpm --filter './lib/*' run typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
