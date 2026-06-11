@@ -73,6 +73,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(msg, show_alert=True)
         elif data == "menu_settings":
             await _cb_settings(query)
+        elif data == "dq_refresh":
+            await safe_edit(query, "⏳ Re-auditing data quality…")
+            await _cb_dataquality(query)
     except Exception as e:
         logger.error(f"Callback error [{data}]: {e}", exc_info=True)
         try:
@@ -548,3 +551,111 @@ async def _cb_settings(query):
     )
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Back", callback_data="menu_main")]])
     await safe_edit(query, text, reply_markup=kb)
+
+
+async def _cb_dataquality(query):
+    """
+    Inline refresh handler for /dataquality.
+    Runs the same validation logic as cmd_dataquality but edits the existing message.
+    """
+    from bot.services.data_service import get_market_snapshot
+    from bot.utils.constants import IDX_STOCKS, SECTOR_ICONS
+    from collections import Counter
+    import time
+
+    lines       = ["🔬 *IDX Data Quality Report*\n"]
+    issues      = []
+    ok_count    = 0
+    fail_count  = 0
+    stale_count = 0
+    suspect_sectors = []
+
+    for sector_name, tickers in IDX_STOCKS.items():
+        sample  = tickers[:10]
+        t0      = time.monotonic()
+        snaps   = get_market_snapshot(sample, _context=f"dq:{sector_name}")
+        latency = time.monotonic() - t0
+
+        ok   = len(snaps)
+        fail = len(sample) - ok
+        ok_count   += ok
+        fail_count += fail
+
+        pcts           = [round(s.get("pct_chg", 0), 2) for s in snaps]
+        counts         = Counter(pcts)
+        top_val, top_cnt = counts.most_common(1)[0] if counts else (0, 0)
+        uniform        = ok > 2 and (top_cnt / max(ok, 1)) >= 0.6
+
+        for s in snaps:
+            ts_str = s.get("timestamp", "")
+            if ts_str:
+                try:
+                    from datetime import datetime
+                    ts  = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00").split("+")[0])
+                    age = (datetime.utcnow() - ts.replace(tzinfo=None)).total_seconds() / 3600
+                    if age > 24:
+                        stale_count += 1
+                        issues.append(f"⚠️ STALE DATA: {s['ticker']} quote age {age:.0f}h")
+                except Exception:
+                    pass
+
+        icon   = SECTOR_ICONS.get(sector_name, "📊")
+        status = "⚠️ SUSPECT" if uniform else ("✅ OK" if fail == 0 else "🔶 PARTIAL")
+        if uniform:
+            suspect_sectors.append(sector_name)
+            issues.append(
+                f"⚠️ UNIFORM DATA: {sector_name} — "
+                f"{top_cnt}/{ok} stocks show pct={top_val}% (rate-limit?)"
+            )
+
+        lines.append(
+            f"{icon} *{sector_name[:14]:14s}* {status}\n"
+            f"  Data: {ok}/{len(sample)} ok  |  Latency: {latency*1000:.0f}ms  |  "
+            f"Fail: {fail}"
+        )
+
+    lines.append("")
+
+    sample_snaps = get_market_snapshot(
+        [t for tickers in IDX_STOCKS.values() for t in tickers[:3]][:30],
+        _context="dq:fields"
+    )
+    missing_val = [s["ticker"] for s in sample_snaps if not s.get("value")]
+    missing_vol = [s["ticker"] for s in sample_snaps if not s.get("volume")]
+    if missing_val:
+        issues.append(f"⚠️ MISSING VALUE: {', '.join(missing_val[:6])}")
+    if missing_vol:
+        issues.append(f"⚠️ MISSING VOLUME: {', '.join(missing_vol[:6])}")
+
+    total   = ok_count + fail_count
+    pct_ok  = ok_count / max(total, 1) * 100
+    health  = "🟢 Good" if pct_ok >= 80 else ("🟡 Degraded" if pct_ok >= 50 else "🔴 Poor")
+
+    summary = (
+        f"*── Summary ──*\n"
+        f"Health      : {health} ({pct_ok:.0f}%)\n"
+        f"Valid data  : {ok_count}/{total} stocks\n"
+        f"Failed      : {fail_count}\n"
+        f"Stale quotes: {stale_count}\n"
+        f"Suspect sectors: {len(suspect_sectors)}"
+    )
+    if suspect_sectors:
+        summary += f"\n  → {', '.join(suspect_sectors)}"
+
+    lines.append(summary)
+    if issues:
+        lines.append("\n*── Issues Detected ──*")
+        for issue in issues[:10]:
+            lines.append(issue)
+    else:
+        lines.append("\n✅ No data integrity issues detected.")
+
+    lines.append("\n_Run `/dataquality` anytime to re-audit._")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh",         callback_data="dq_refresh"),
+         InlineKeyboardButton("🔄 Sector Rotation",  callback_data="menu_sector")],
+        [InlineKeyboardButton("🔥 Heatmap",          callback_data="menu_heatmap"),
+         InlineKeyboardButton("🏠 Menu",             callback_data="menu_main")],
+    ])
+    await safe_edit(query, "\n".join(lines), reply_markup=kb)
