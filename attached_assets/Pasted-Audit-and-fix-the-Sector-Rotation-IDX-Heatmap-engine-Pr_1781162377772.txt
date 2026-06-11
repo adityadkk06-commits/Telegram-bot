@@ -1,0 +1,162 @@
+Audit and fix the Sector Rotation / IDX Heatmap engine.
+
+Problem:
+The generated sector rotation heatmap does not match the real IDX market structure.
+
+Current symptoms:
+
+* The same stock appears repeatedly across multiple sectors.
+* Sector leaders do not reflect actual market leadership.
+* Heatmap colors often disagree with real market movement.
+* Volume leaders are inaccurate or missing.
+* Sector rotation output differs significantly from Stockbit, RTI, TradingView, and real IDX market data.
+
+Please perform a full investigation and identify the root cause.
+
+Required checks:
+
+1. Sector Mapping Validation
+
+* Verify that each stock belongs to the correct IDX sector.
+* Ensure a ticker can only appear in one sector.
+* Prevent duplicate ticker rendering.
+* Validate sector classification against official IDX sector definitions.
+
+2. Heatmap Construction
+    Current output appears to duplicate the same stock multiple times.
+
+Requirements:
+
+* Each ticker should appear only once.
+* Each sector should contain only its actual constituents.
+* Treemap size should be proportional to:
+    * Market Cap (preferred)
+    * Free Float Market Cap
+    * Transaction Value (fallback)
+
+Do NOT duplicate tiles to fill empty space.
+
+3. Real Sector Strength Calculation
+    Replace simple average % change with weighted sector performance.
+
+Sector Strength Score:
+
+score =
+(weighted market cap return × 50%)
+
+* (weighted transaction value × 30%)
+* (relative volume strength × 20%)
+
+Large-cap stocks should influence sector performance more than small-cap stocks.
+
+Example:
+BBCA should impact Financials more than a micro-cap bank.
+
+4. Market Rotation Engine
+    Calculate:
+
+* Strongest Sector
+* Weakest Sector
+* Improving Sector
+* Deteriorating Sector
+* Sector Money Flow
+
+Output example:
+
+🔥 Strongest Sector: Energy (+2.8%)
+📈 Improving Sector: Healthcare
+📉 Weakest Sector: Property (-1.7%)
+💰 Highest Money Flow: Financials
+
+5. Real-Time Data Validation
+    Investigate whether data source is causing discrepancies.
+
+Check:
+
+* Delayed quotes
+* Cached data
+* Missing volume
+* Missing transaction value
+* Missing sector metadata
+
+Log all missing fields.
+
+Example:
+
+WARNING: BBCA missing market_cap
+WARNING: TLKM missing sector mapping
+WARNING: ASII stale quote (18 min old)
+
+6. Volume Leader Logic
+    Current volume leaders appear incorrect.
+
+Requirements:
+
+Volume Score =
+(transaction value × 70%)
+
+* (relative volume × 30%)
+
+Display top 3 genuine volume leaders.
+
+Do not use raw share volume alone.
+
+7. Heatmap Coloring
+    Use sector-relative coloring:
+
+Strong Bullish:
+
++3%
+
+Bullish:
++1% to +3%
+
+Neutral:
+-1% to +1%
+
+Bearish:
+-3% to -1%
+
+Strong Bearish:
+< -3%
+
+Ensure colors match actual sector performance.
+
+8. Data Integrity Checks
+    Add debug logs:
+
+DUPLICATE TICKER: BBCA found in multiple sectors
+INVALID SECTOR: XXXX missing sector mapping
+STALE DATA: BBRI quote age 25 min
+MISSING VALUE: TLKM market cap unavailable
+
+9. Cross-Validation
+    Compare calculated sector rankings against:
+
+* Stockbit sector performance
+* RTI sector performance
+* TradingView IDX sector performance
+
+Log deviations greater than 10%.
+
+Example:
+
+SECTOR MISMATCH:
+Financials Bot +2.1%
+Financials Market +0.8%
+Deviation = 1.3%
+
+10. Expected Outcome
+
+The heatmap should accurately represent:
+
+* Actual IDX sector rotation
+* Correct sector leadership
+* Correct money flow direction
+* Correct volume leaders
+* Correct stock-to-sector mapping
+* No duplicated tickers
+* Realistic market-cap weighted sector performance
+
+Goal:
+Make the sector rotation dashboard closely match real-market behavior and institutional money flow rather than a simple percentage-change visualization.

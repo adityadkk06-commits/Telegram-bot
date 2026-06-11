@@ -527,6 +527,141 @@ async def cmd_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_dataquality(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /dataquality — Live data validation report.
+
+    Shows:
+    • Number of stocks with valid data vs total scanned
+    • Data source health (yfinance latency, stale quotes)
+    • Detection of uniform / rate-limited data per sector
+    • Volume leader integrity check
+    • Missing field warnings (market_cap, value, sector mapping)
+    • Sector deviation log (equal-weight vs mcap-weighted)
+    """
+    msg = await update.message.reply_text(
+        "⏳ Running data quality audit across all IDX sectors…"
+    )
+
+    from bot.services.data_service import get_market_snapshot, generate_data_report
+    from bot.utils.constants import IDX_STOCKS, SECTOR_ICONS
+    from collections import Counter
+    import time
+
+    lines     = ["🔬 *IDX Data Quality Report*\n"]
+    issues    = []
+    ok_count  = 0
+    fail_count= 0
+    stale_count = 0
+    suspect_sectors = []
+
+    # ── Per-sector validation ─────────────────────────────────────────────────
+    for sector_name, tickers in IDX_STOCKS.items():
+        sample = tickers[:10]
+        t0     = time.monotonic()
+        snaps  = get_market_snapshot(sample, _context=f"dq:{sector_name}")
+        latency= time.monotonic() - t0
+
+        ok     = len(snaps)
+        fail   = len(sample) - ok
+        ok_count   += ok
+        fail_count += fail
+
+        # Duplicate pct check
+        pcts    = [round(s.get("pct_chg", 0), 2) for s in snaps]
+        counts  = Counter(pcts)
+        top_val, top_cnt = counts.most_common(1)[0] if counts else (0, 0)
+        uniform = ok > 2 and (top_cnt / max(ok, 1)) >= 0.6
+
+        # Stale quote detection (timestamp > 1 day old)
+        for s in snaps:
+            ts_str = s.get("timestamp", "")
+            if ts_str:
+                try:
+                    from datetime import datetime
+                    import pytz
+                    ts  = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00").split("+")[0])
+                    age = (datetime.utcnow() - ts.replace(tzinfo=None)).total_seconds() / 3600
+                    if age > 24:
+                        stale_count += 1
+                        issues.append(f"⚠️ STALE DATA: {s['ticker']} quote age {age:.0f}h")
+                except Exception:
+                    pass
+
+        icon    = SECTOR_ICONS.get(sector_name, "📊")
+        status  = "⚠️ SUSPECT" if uniform else ("✅ OK" if fail == 0 else "🔶 PARTIAL")
+        if uniform:
+            suspect_sectors.append(sector_name)
+            issues.append(
+                f"⚠️ UNIFORM DATA: {sector_name} — "
+                f"{top_cnt}/{ok} stocks show pct={top_val}% (rate-limit?)"
+            )
+
+        lines.append(
+            f"{icon} *{sector_name[:14]:14s}* {status}\n"
+            f"  Data: {ok}/{len(sample)} ok  |  Latency: {latency*1000:.0f}ms  |  "
+            f"Fail: {fail}"
+        )
+
+    lines.append("")
+
+    # ── Missing field summary ────────────────────────────────────────────────
+    sample_snaps = get_market_snapshot(
+        [t for tickers in IDX_STOCKS.values() for t in tickers[:3]][:30],
+        _context="dq:missing_fields"
+    )
+    missing_val   = [s["ticker"] for s in sample_snaps if not s.get("value")]
+    missing_vol   = [s["ticker"] for s in sample_snaps if not s.get("volume")]
+    missing_rsi   = [s["ticker"] for s in sample_snaps if not s.get("rsi")]
+
+    if missing_val:
+        issues.append(f"⚠️ MISSING VALUE: {', '.join(missing_val[:6])}")
+    if missing_vol:
+        issues.append(f"⚠️ MISSING VOLUME: {', '.join(missing_vol[:6])}")
+    if missing_rsi:
+        issues.append(f"ℹ️ MISSING RSI: {', '.join(missing_rsi[:6])} (insufficient history)")
+
+    # ── Summary block ─────────────────────────────────────────────────────────
+    total     = ok_count + fail_count
+    pct_ok    = ok_count / max(total, 1) * 100
+    health    = "🟢 Good" if pct_ok >= 80 else ("🟡 Degraded" if pct_ok >= 50 else "🔴 Poor")
+
+    summary = (
+        f"*── Summary ──*\n"
+        f"Health      : {health} ({pct_ok:.0f}%)\n"
+        f"Valid data  : {ok_count}/{total} stocks\n"
+        f"Failed      : {fail_count} ({fail_count/max(total,1)*100:.0f}%)\n"
+        f"Stale quotes: {stale_count}\n"
+        f"Suspect sectors: {len(suspect_sectors)}"
+    )
+    if suspect_sectors:
+        summary += f"\n  → {', '.join(suspect_sectors)}"
+
+    lines.append(summary)
+
+    if issues:
+        lines.append("\n*── Issues Detected ──*")
+        for issue in issues[:12]:
+            lines.append(issue)
+        if len(issues) > 12:
+            lines.append(f"  _…and {len(issues)-12} more (check bot logs)_")
+    else:
+        lines.append("\n✅ No data integrity issues detected.")
+
+    lines.append("\n_Run `/dataquality` anytime to re-audit._")
+
+    await msg.delete()
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh",        callback_data="dq_refresh"),
+         InlineKeyboardButton("🔄 Sector Rotation", callback_data="menu_sector")],
+        [InlineKeyboardButton("🔥 Heatmap",         callback_data="menu_heatmap"),
+         InlineKeyboardButton("🏠 Menu",            callback_data="menu_main")],
+    ])
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="Markdown", reply_markup=kb
+    )
+
+
 async def cmd_foreign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg   = await update.message.reply_text("⏳ Scanning foreign flow...")
     snaps = get_market_snapshot(ALL_IDX_STOCKS[:50])

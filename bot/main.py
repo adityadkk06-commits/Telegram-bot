@@ -13,7 +13,7 @@ from bot.handlers.command_handlers import (
     cmd_start, cmd_menu, cmd_help, cmd_chart, cmd_screener,
     cmd_heatmap, cmd_sector, cmd_momentum, cmd_breadth,
     cmd_watchlist, cmd_add, cmd_remove, cmd_bandar, cmd_foreign,
-    cmd_alert,
+    cmd_alert, cmd_dataquality,
     BOTTOM_KB,
 )
 from bot.utils.constants import (
@@ -464,7 +464,10 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("scalp",  cmd_scalp))
 
     # Price alerts
-    app.add_handler(CommandHandler("alert",  cmd_alert))
+    app.add_handler(CommandHandler("alert",       cmd_alert))
+
+    # Data quality audit
+    app.add_handler(CommandHandler("dataquality", cmd_dataquality))
 
     # Bottom keyboard text buttons (must come BEFORE ticker handler)
     kb_labels = [
