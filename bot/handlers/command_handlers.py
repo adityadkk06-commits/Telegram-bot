@@ -527,6 +527,50 @@ async def cmd_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_sectortrend(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /sectortrend — 5-day cumulative return chart for all 11 IDX sectors.
+
+    Each sector line = equal-weighted daily return of its top 3 stocks.
+    Shows which sectors are gaining / losing momentum over the last week.
+    """
+    msg = await update.message.reply_text(
+        "⏳ Building 5-day sector momentum chart…\n"
+        "_Fetching daily OHLCV for all 11 sectors (may take ~20s)_",
+        parse_mode="Markdown",
+    )
+    from bot.heatmap.sector_momentum import generate_sector_momentum_chart
+
+    buf = generate_sector_momentum_chart(days=5)
+    await msg.delete()
+
+    if not buf:
+        await update.message.reply_text(
+            "❌ Unable to generate sector trend chart — insufficient market data.\n"
+            "_Try again during or just after market hours._",
+            parse_mode="Markdown",
+        )
+        return
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh",          callback_data="sectortrend_refresh"),
+         InlineKeyboardButton("🔥 Heatmap",          callback_data="menu_heatmap")],
+        [InlineKeyboardButton("🔄 Sector Rotation",  callback_data="menu_sector"),
+         InlineKeyboardButton("🏠 Menu",             callback_data="menu_main")],
+    ])
+    await update.message.reply_photo(
+        photo=buf,
+        caption=(
+            "📈 *IDX Sector Momentum — Last 5 Trading Days*\n\n"
+            "Lines = cumulative return from 5 days ago.\n"
+            "Each sector = equal-weighted avg of top 3 stocks.\n"
+            "_Data: yfinance · 15-min delay · Not financial advice_"
+        ),
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+
 async def cmd_dataquality(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /dataquality — Live data validation report.

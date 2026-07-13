@@ -76,6 +76,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "dq_refresh":
             await safe_edit(query, "⏳ Re-auditing data quality…")
             await _cb_dataquality(query)
+        elif data == "sectortrend_refresh":
+            await query.answer("⏳ Regenerating chart…")
+            await _cb_sectortrend(query)
     except Exception as e:
         logger.error(f"Callback error [{data}]: {e}", exc_info=True)
         try:
@@ -551,6 +554,35 @@ async def _cb_settings(query):
     )
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Back", callback_data="menu_main")]])
     await safe_edit(query, text, reply_markup=kb)
+
+
+async def _cb_sectortrend(query):
+    """Inline refresh for /sectortrend — sends a new photo message."""
+    from bot.heatmap.sector_momentum import generate_sector_momentum_chart
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buf = generate_sector_momentum_chart(days=5)
+    if not buf:
+        await safe_edit(query, "❌ Not enough market data to generate trend chart. Try again after market hours.")
+        return
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh",         callback_data="sectortrend_refresh"),
+         InlineKeyboardButton("🔥 Heatmap",         callback_data="menu_heatmap")],
+        [InlineKeyboardButton("🔄 Sector Rotation", callback_data="menu_sector"),
+         InlineKeyboardButton("🏠 Menu",            callback_data="menu_main")],
+    ])
+    caption = (
+        "📈 *IDX Sector Momentum — Last 5 Trading Days*\n\n"
+        "Lines = cumulative return from 5 days ago.\n"
+        "Each sector = equal-weighted avg of top 3 stocks.\n"
+        "_Data: yfinance · 15-min delay · Not financial advice_"
+    )
+    try:
+        await query.message.reply_photo(photo=buf, caption=caption,
+                                        parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        await safe_edit(query, "❌ Failed to send chart. Please try /sectortrend.")
 
 
 async def _cb_dataquality(query):

@@ -1,0 +1,45 @@
+# Prompt: Audit & Accuracy Improvement for IDX Screener
+
+Do a full audit of all my trading bot projects (BSJP, ARA Hunter, Big Accumulation, accumulation_screener.py, and related modules in the Telegram-bot / Stockbit-bit repos). Goal: improve signal accuracy so it matches how professional traders actually operate and reflects real current IDX market conditions — not just theoretical logic.
+
+## 1. Project Inventory
+- List all existing files/modules, what each does, and dependencies between them.
+- Flag which parts use live/real-time data vs cached/delayed data (e.g. yfinance 15-min delay).
+
+## 2. Validate Signal Logic Against Real IDX Market Mechanics
+- Check breakout filter: make sure rolling max/min does NOT include the current day's bar (avoid lookahead bias).
+- Check VWAP: confirm the formula is correct (not just Typical Price mislabeled as VWAP).
+- Check the impact of the Non-Cancellation Period (starts 08:56 WIB) on the validity of open/ORB signals.
+- Check ARA/ARB rules per price band (auto-reject limits differ by price range) — make sure it's not hardcoded to one flat number.
+- Check tick size & lot size match the latest IDX rules per price band.
+- Check trading sessions (session 1, session 2, pre-closing, post-closing) are properly handled in the bot's scheduler.
+
+## 3. Sector Classification
+- Make sure sector mapping uses the latest IDX-IC (IDX Industry Classification), not the old JASICA system.
+- Cross-check the stock list per sector against current official IDX/Stockbit data (new listings, delistings, or sector reclassifications that may not be updated yet).
+
+## 4. Heatmap
+- Make sure the sector heatmap is calculated using real market-cap weighting per stock/sector (not a simple average).
+- Validate heatmap color thresholds (e.g. +2%/-2%) are relevant to actual IDX volatility, not generic assumptions borrowed from other markets (e.g. US).
+- Check whether the heatmap data is real-time or delayed, and show a disclaimer if delayed.
+
+## 5. Bandarmology & Foreign Flow
+- Check the broker summary logic: is AccumScore purely heuristic, or does it have statistical validation (e.g. net buy value relative to 20-day average volume)?
+- Check foreign flow: confirm the net foreign buy/sell formula follows the standard definition (not just a raw volume difference).
+
+## 6. Data Quality
+- Identify every data source used (yfinance, Stockbit scraping, etc.) and note the limitations of each (delay, volume accuracy, corporate action adjustments).
+- Check handling of stock splits/reverse splits/dividends so historical prices don't distort signals.
+
+## 7. Deliverable I Want
+1. An audit report per module: bugs/inaccuracies found + urgency level (critical/medium/minor).
+2. Concrete, code-level fix recommendations, prioritized by impact on signal accuracy.
+3. If some logic is already correct, mention it too so I know what's safe.
+4. Don't drastically restructure the project — focus on accuracy fixes, not a full refactor unless truly necessary.
+
+## 8. Important Constraint
+- Do NOT modify, overwrite, or delete any existing files/code in this step. This is an audit/review only.
+- Present findings and proposed fixes as a report first (diffs or code snippets are fine to show as examples), so I can review and approve before anything gets implemented.
+- Keep the current project structure, file names, and working features fully intact unless I explicitly say "go ahead and apply the changes."
+
+Answer in a direct, no-fluff style. Skip long theory unless I ask for detail.
