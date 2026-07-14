@@ -24,12 +24,12 @@ args = "IDX Stock Screener Bot"
 name = "IDX Stock Screener Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python -m bot.main"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash start.sh"
 
 [agent]
 stack = "PNPM_WORKSPACE"
