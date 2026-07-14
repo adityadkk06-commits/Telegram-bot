@@ -25,12 +25,22 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Syntax check
+      - name: Syntax check — all core modules
         run: |
           uv run python -m py_compile bot/main.py
+          uv run python -m py_compile bot/services/data_service.py
+          uv run python -m py_compile bot/bandarmology/broker_analyzer.py
+          uv run python -m py_compile bot/screener/filter_engine.py
+          uv run python -m py_compile bot/screener/screener_engine.py
+          uv run python -m py_compile bot/screener/ara_hunter.py
+          uv run python -m py_compile bot/screener/bsjp.py
+          uv run python -m py_compile bot/screener/big_accumulation.py
+          uv run python -m py_compile bot/screener/scalper_pro.py
+          uv run python -m py_compile bot/handlers/command_handlers.py
+          uv run python -m py_compile bot/handlers/callback_handlers.py
+          uv run python -m py_compile bot/heatmap/sector_momentum.py
           uv run python -m py_compile bot/alerts/scanner.py
           uv run python -m py_compile bot/alerts/signal_engine.py
-          uv run python -m py_compile bot/services/data_service.py
 
       - name: Lint with ruff
         run: uv run ruff check bot/ || true

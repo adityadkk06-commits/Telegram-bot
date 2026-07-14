@@ -1,0 +1,23 @@
+Focus ONLY on these 4 items — don't add new features, don't refactor anything else, don't build additional AI analysis layers. These are unresolved bugs from a previous task.
+
+## CRITICAL #1 — Technical indicators are NULL on the primary live data path
+In `bot/services/data_service.py`, `get_market_snapshot()` → the primary path (`_intraday_bulk`) hardcodes `ma5, ma20, ma50, vol_ma20, vol_ma5, rsi, macd, macd_signal, bandar_score, vwap` to `None` for every stock. `screener_engine.py` never backfills these before scoring, so almost every indicator-based criterion in every screener falls into "missing data" handling.
+
+FIX: after `get_market_snapshot()` gets the intraday snapshot, compute these indicators for each ticker using historical data (`get_stock_data()` + `compute_indicators()`, or a lighter equivalent) BEFORE passing snapshots to any `*_score()` function in `screener_engine.py`. Verify indicator fields are populated (not None) for the majority of tickers when screeners actually run.
+
+## CRITICAL #2 — Bandarmology is fabricated with random.Random
+In `bot/bandarmology/broker_analyzer.py`, `estimate_broker_signal()` uses `random.Random(seed)` seeded from `hash(ticker)` + `pct_chg`, with a hardcoded bullish bias, to generate fake broker flows labeled "AK+BK Accumulation" etc. This is shown to users in `screener_engine.py` as if it's real broker data.
+
+FIX: either (a) replace with a real broker/foreign flow data source, or (b) if no real data source is available right now, remove the specific broker codes (AK, BK) and relabel the output clearly as "Technical Momentum Bias" instead of implying real broker data — don't let random output masquerade as broker-specific signals.
+
+## CRITICAL #3 — "Foreign Flow" is just relabeled price change
+In `screener_engine.py`: `"foreign_flow": "Positive" if stock.get("pct_chg", 0) > 1 else "Neutral"` — this is just price change relabeled, not real foreign investor data. Same pattern in `bsjp.py`'s foreign signal check.
+
+FIX: source real foreign buy/sell data if feasible, or clearly relabel this field so it's not presented as foreign investor activity.
+
+## CRITICAL #4 — The proper spec output functions are never called
+`ara_hunter_output()`, `bsjp_output()`, `big_accumulation_output()` in their respective files compute Entry/TP/SL, Risk Level, Institutional Score, etc. — but `screener_engine.py` only imports the `*_score()` gate functions via `_get_score_fn()`, and builds generic `momentum_score`/`volume_score` instead via `_momentum_score()`/`_scalp_score()`.
+
+FIX: in `screener_engine.py`, call the matching `*_output()` function per screener type and merge its fields (entry_low, entry_high, tp, sl, rr, risk_level, and screener-specific quality labels) into the `enriched` dict. Confirm `bot/handlers/callback_handlers.py`'s `format_screener_results()` actually displays these fields once available.
+
+Give me a changelog of exactly what changed in each file, and confirm each of the 4 items above is actually resolved — don't mark something done unless the code demonstrably does it.

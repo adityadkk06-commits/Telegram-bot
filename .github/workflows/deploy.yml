@@ -1,19 +1,35 @@
-name: Deploy
+name: Deploy to Railway
 
 on:
   push:
     branches: [main, master]
 
 jobs:
-  notify:
-    name: Deployment Notification
+  deploy:
+    name: Trigger Railway Redeploy
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Notify on deploy
+      - name: Log deployment info
         run: |
-          echo "✅ Code pushed to ${{ github.ref_name }} by ${{ github.actor }}"
-          echo "Commit: ${{ github.sha }}"
+          echo "✅ Push to ${{ github.ref_name }} by ${{ github.actor }}"
+          echo "Commit : ${{ github.sha }}"
           echo "Message: ${{ github.event.head_commit.message }}"
+
+      - name: Trigger Railway redeploy
+        # RAILWAY_WEBHOOK_URL must be added as a GitHub secret:
+        # Railway dashboard → your service → Settings → Deploy Webhook → copy URL
+        # GitHub repo → Settings → Secrets → Actions → New secret → RAILWAY_WEBHOOK_URL
+        if: ${{ secrets.RAILWAY_WEBHOOK_URL != '' }}
+        run: |
+          echo "Sending deploy trigger to Railway…"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.RAILWAY_WEBHOOK_URL }}")
+          if [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]; then
+            echo "✅ Railway redeploy triggered (HTTP $STATUS)"
+          else
+            echo "⚠️  Railway webhook returned HTTP $STATUS — check the URL in GitHub secrets"
+            exit 1
+          fi
