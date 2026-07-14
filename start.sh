@@ -3,51 +3,60 @@
 # Runs before every bot start. Commits + pushes any code changes to GitHub.
 # If RAILWAY_WEBHOOK_URL secret is set, also triggers Railway redeploy.
 # ────────────────────────────────────────────────────────────────────────────
-set -uo pipefail
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🔄  Auto-sync: Replit → GitHub → Railway"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Git identity required for commits
-git config user.email "idx-bot@auto-sync.local" 2>/dev/null || true
-git config user.name  "IDX Bot Auto-Sync"       2>/dev/null || true
+git config user.email "idx-bot@auto-sync.local"
+git config user.name  "IDX Bot Auto-Sync"
 
-# Stage everything (bot code + configs)
-git add -A 2>/dev/null || true
+# Prevent git from prompting for credentials
+export GIT_TERMINAL_PROMPT=0
+
+# Stage everything
+git add -A
 
 # Only push if there are actual changes
-if git diff --cached --quiet 2>/dev/null; then
+if git diff --cached --quiet; then
     echo "✅  No changes — GitHub already up to date"
 else
     TIMESTAMP=$(TZ='Asia/Jakarta' date '+%Y-%m-%d %H:%M WIB')
-    git commit -m "auto-sync: ${TIMESTAMP}" 2>/dev/null \
-        && echo "✅  Committed: ${TIMESTAMP}" \
-        || echo "⚠️  Commit failed (non-fatal)"
+    if git commit -m "auto-sync: ${TIMESTAMP}"; then
+        echo "✅  Committed: ${TIMESTAMP}"
+    else
+        echo "⚠️  Commit failed"
+    fi
 
-    # Authenticate push with GITHUB_PAT
-    if [ -n "${GITHUB_PAT:-}" ]; then
-        REMOTE="https://${GITHUB_PAT}@github.com/adityadkk06-commits/Telegram-bot.git"
-        if git push "${REMOTE}" main 2>/dev/null; then
+    # Push using GITHUB_PAT for authentication
+    PAT="${GITHUB_PAT:-}"
+    if [ -z "$PAT" ]; then
+        echo "⚠️  GITHUB_PAT secret not set — skipping push"
+    else
+        REMOTE="https://${PAT}@github.com/adityadkk06-commits/Telegram-bot.git"
+        echo "📤  Pushing to GitHub..."
+        PUSH_OUT=$(git push "$REMOTE" main 2>&1)
+        PUSH_CODE=$?
+        if [ $PUSH_CODE -eq 0 ]; then
             echo "✅  Pushed to GitHub → adityadkk06-commits/Telegram-bot"
 
             # Trigger Railway webhook if configured
-            if [ -n "${RAILWAY_WEBHOOK_URL:-}" ]; then
-                STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                    -X POST "${RAILWAY_WEBHOOK_URL}" 2>/dev/null || echo "000")
+            WEBHOOK="${RAILWAY_WEBHOOK_URL:-}"
+            if [ -n "$WEBHOOK" ]; then
+                STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK")
                 if [ "$STATUS" = "200" ] || [ "$STATUS" = "201" ]; then
-                    echo "✅  Railway redeploy triggered (HTTP ${STATUS})"
+                    echo "✅  Railway redeploy triggered"
                 else
-                    echo "⚠️  Railway webhook HTTP ${STATUS} — check RAILWAY_WEBHOOK_URL secret"
+                    echo "⚠️  Railway webhook HTTP ${STATUS}"
                 fi
             else
-                echo "ℹ️  Add RAILWAY_WEBHOOK_URL secret to also trigger Railway redeploy"
+                echo "ℹ️  Add RAILWAY_WEBHOOK_URL secret to also auto-deploy to Railway"
             fi
         else
-            echo "⚠️  GitHub push failed — check GITHUB_PAT secret (bot will still start)"
+            echo "❌  Push failed (exit $PUSH_CODE):"
+            echo "    $PUSH_OUT"
         fi
-    else
-        echo "⚠️  GITHUB_PAT not set — skipping GitHub push"
     fi
 fi
 
