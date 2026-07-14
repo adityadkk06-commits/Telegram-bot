@@ -60,8 +60,7 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               price >= vwap * 0.99,
               f"{abs(vwap_gap):.1f}% below VWAP ({vwap:,.0f})")
     else:
-        # No VWAP data — give partial credit
-        r.max_score += 10; r.score += 5
+        r.add_missing("Price>VWAP", 10)
 
     # 5. Price > MA5  (10 pts) — near: within -1%
     if ma5:
@@ -71,7 +70,7 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               price >= ma5 * 0.99,
               f"{abs(gap5):.1f}% below MA5 ({ma5:,.0f})")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("Price>MA5", 10)
 
     # 6. MA5 > MA20 trend alignment  (10 pts) — near: within -1%
     if ma5 and ma20:
@@ -81,7 +80,7 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               ma5 >= ma20 * 0.99,
               f"MA5 {abs(gap_ma):.1f}% {'above' if gap_ma>=0 else 'below'} MA20")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("MA5>MA20", 10)
 
     # 7. RSI in [38, 63]  (10 pts) — near: [30, 72]
     if rsi is not None:
@@ -92,18 +91,16 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               rsi_near and not rsi_strict,
               f"RSI {rsi:.1f} (need 38–63)")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("RSI[38-63]", 10)
 
     # 8. MACD > Signal (momentum)  (10 pts) — near: within -15%
     if macd is not None and macd_sig is not None:
-        macd_gap = macd - macd_sig
-        macd_ref = abs(macd_sig) if macd_sig != 0 else 0.0001
         r.add("MACD>Signal", 10, 6,
               macd >= macd_sig,
               macd >= macd_sig * 0.85 if macd_sig > 0 else macd >= macd_sig * 1.15,
               f"MACD {macd:.4f} vs sig {macd_sig:.4f}")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("MACD>Signal", 10)
 
     # 9. Bandar interest (smart money)  (10 pts) — near: > -10
     if bandar_sc is not None:
@@ -112,7 +109,7 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               bandar_sc > -10,
               f"bandar score {bandar_sc:.1f} (need >5)")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("BandarScore>5", 10)
 
     # 10. Tight intraday candle < 3%  (10 pts) — near: <5%
     if price > 0:
@@ -122,9 +119,52 @@ def scalper_pro_score(stock: dict) -> FilterResult:
               rng_pct < 5.0,
               f"range {rng_pct:.1f}% (need <3%)")
     else:
-        r.max_score += 10; r.score += 5
+        r.add_missing("Range<3%", 10)
 
     return r.finalise()
+
+
+def scalper_pro_output(stock: dict) -> dict:
+    """
+    Trade setup for a Scalper Pro candidate (intraday focus).
+    Tight SL (-0.8%), tight TP (+1.2%), quick RR ~1.5.
+    """
+    price    = stock.get("price") or 0
+    vwap     = stock.get("vwap") or price
+    ma5      = stock.get("ma5") or price
+    high     = stock.get("high") or price
+    low      = stock.get("low") or price
+    rsi      = stock.get("rsi") or 50
+    if not price:
+        return {}
+
+    # Intraday ATR proxy
+    atr_proxy = max(high - low, price * 0.008)
+
+    entry_low  = round(price * 1.000, 0)
+    entry_high = round(price * 1.003, 0)
+    tp1        = round(price + 1.2 * atr_proxy, 0)
+    tp2        = round(price + 2.0 * atr_proxy, 0)
+    sl         = round(max(price - 0.8 * atr_proxy, low * 0.998), 0)
+    rr         = round((tp1 - price) / max(price - sl, 1), 2)
+
+    # Intraday candle tightness
+    rng_pct = (high - low) / price * 100 if price else 0
+    if rng_pct < 1.5:   scalp_quality = "Tight (Ideal)"
+    elif rng_pct < 3.0: scalp_quality = "Moderate"
+    else:               scalp_quality = "Wide (Risky)"
+
+    return {
+        "entry_low":    entry_low,
+        "entry_high":   entry_high,
+        "tp1":          tp1,
+        "tp2":          tp2,
+        "sl":           sl,
+        "rr":           rr,
+        "risk_level":   "Low" if rng_pct < 2.0 else "Medium",
+        "scalp_quality": scalp_quality,
+        "vwap":         round(vwap, 0) if vwap else None,
+    }
 
 
 def scalper_pro_filter(stock: dict) -> bool:

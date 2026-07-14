@@ -256,7 +256,10 @@ async def watchlist_alert_job(context: ContextTypes.DEFAULT_TYPE):
     snaps  = get_market_snapshot(tickers)
     alerts = [
         s for s in snaps
-        if (s.get("rel_vol") or 1) > 2.5 or abs(s.get("pct_chg", 0)) > 3
+        if (
+            ((s.get("rel_vol") or 1) > 2.5 or abs(s.get("pct_chg", 0)) > 3)
+            and (s.get("value") or 0) >= 1_000_000_000   # ≥1B IDR liquidity floor
+        )
     ]
     if not alerts:
         return
@@ -315,7 +318,7 @@ async def market_open_broadcast(context: ContextTypes.DEFAULT_TYPE):
     emoji = "🟢" if pct >= 0 else "🔴"
 
     # Quick momentum scan
-    snaps = get_market_snapshot(ALL_IDX_STOCKS[:40])
+    snaps = get_market_snapshot(ALL_IDX_STOCKS)   # full universe, not first 40
     top5  = sorted(snaps, key=lambda x: x.get("pct_chg", 0), reverse=True)[:5]
 
     lines = [
@@ -376,7 +379,7 @@ async def market_close_broadcast(context: ContextTypes.DEFAULT_TYPE):
     sign  = "+" if pct >= 0 else ""
     emoji = "🟢" if pct >= 0 else "🔴"
 
-    snaps   = get_market_snapshot(ALL_IDX_STOCKS[:60])
+    snaps   = get_market_snapshot(ALL_IDX_STOCKS)   # full universe, not first 60
     gainers = sorted(snaps, key=lambda x: x.get("pct_chg", 0), reverse=True)[:5]
     losers  = sorted(snaps, key=lambda x: x.get("pct_chg", 0))[:3]
     adv     = sum(1 for s in snaps if s.get("pct_chg", 0) > 0)

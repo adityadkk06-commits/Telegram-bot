@@ -35,7 +35,7 @@ def big_accumulation_score(stock: dict) -> FilterResult:
               bandar_sc > 10,
               f"score {bandar_sc:.1f} (need >25)")
     else:
-        r.max_score += 22; r.score += 8
+        r.add_missing("Bandar>25", 22)
 
     # 2. Value > 3B  (16 pts) — near: >1B
     r.add("Value>3B", 16, 9,
@@ -51,7 +51,7 @@ def big_accumulation_score(stock: dict) -> FilterResult:
               ma20 >= ma50 * 0.98,
               f"MA20 {abs(gap):.1f}% {'above' if gap>=0 else 'below'} MA50")
     else:
-        r.max_score += 22; r.score += 10
+        r.add_missing("MA20>MA50", 22)
 
     # 4. Price < 500  (14 pts) — near: <800
     r.add("Price<500", 14, 8,
@@ -67,7 +67,7 @@ def big_accumulation_score(stock: dict) -> FilterResult:
               vol_ratio >= 1.05,
               f"VolMA5/MA20 ratio {vol_ratio:.2f} (need ≥1.3)")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("VolMA5>1.3×", 14)
 
     # 6. Price > prev  (12 pts) — near: within -0.5%
     r.add("Price>prev", 12, 7,
@@ -76,6 +76,46 @@ def big_accumulation_score(stock: dict) -> FilterResult:
           f"price {pct_chg:.2f}% vs prev (need >0)")
 
     return r.finalise()
+
+
+def big_accumulation_output(stock: dict) -> dict:
+    """
+    Trade setup for a Big Accumulation (penny/small-cap) candidate.
+    Wider TP targets due to lower-price stock volatility.
+    """
+    price       = stock.get("price") or 0
+    ma5         = stock.get("ma5") or price * 0.97
+    bandar_sc   = stock.get("bandar_score") or 0
+    high        = stock.get("high") or price
+    low         = stock.get("low") or price
+    if not price:
+        return {}
+
+    atr_proxy  = max(high - low, price * 0.015)
+
+    entry_low  = round(price * 1.000, 0)
+    entry_high = round(price * 1.010, 0)
+    tp1        = round(price + 3.0 * atr_proxy, 0)
+    tp2        = round(price + 6.0 * atr_proxy, 0)
+    sl         = round(min(ma5 * 0.99, price * 0.965), 0)
+    rr         = round((tp1 - price) / max(price - sl, 1), 2)
+
+    # Accumulation strength from BandarScore
+    if bandar_sc > 50:     acc_strength = "Very Strong"
+    elif bandar_sc > 25:   acc_strength = "Strong"
+    elif bandar_sc > 10:   acc_strength = "Moderate"
+    else:                  acc_strength = "Weak"
+
+    return {
+        "entry_low":            entry_low,
+        "entry_high":           entry_high,
+        "tp1":                  tp1,
+        "tp2":                  tp2,
+        "sl":                   sl,
+        "rr":                   rr,
+        "risk_level":           "Medium",
+        "accumulation_strength": acc_strength,
+    }
 
 
 def big_accumulation_filter(stock: dict) -> bool:

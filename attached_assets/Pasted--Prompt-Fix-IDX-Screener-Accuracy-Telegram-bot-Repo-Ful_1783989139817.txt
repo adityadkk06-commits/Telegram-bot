@@ -1,0 +1,88 @@
+# Prompt: Fix IDX Screener Accuracy — Telegram-bot Repo (Full Audit)
+
+Repo: adityadkk06-commits/Telegram-bot
+Scope: `bot/screener/` (ara_hunter.py, bsjp.py, big_accumulation.py, scalper_pro.py, filter_engine.py, screener_engine.py), `bot/bandarmology/broker_analyzer.py`, `bot/services/data_service.py`, and `bot/main.py` (only the two broadcast functions noted below).
+
+**Constraint: this is a fix task based on confirmed findings below — implement the fixes directly, but do NOT restructure files outside this scope, and do NOT touch Telegram handler wiring, keyboard/menu UI, watchlist persistence, or job scheduling.** Give a per-file changelog of what changed and why at the end.
+
+---
+
+## 🔴 CRITICAL #1 — Technical indicators are NULL on the primary live data path
+
+In `bot/services/data_service.py`, `get_market_snapshot()` has two paths:
+- **Primary (bulk intraday download):** returns `ma5, ma20, ma50, vol_ma20, vol_ma5, rsi, macd, macd_signal, bandar_score, vwap` all hardcoded to `None`, with a comment saying they're "filled by generate_trade_signal."
+- **Fallback (per-ticker daily, `_snapshot_from_daily`):** correctly computes all of these via `compute_indicators()`.
+
+`screener_engine.py`'s `run_screener()` calls `get_market_snapshot(ALL_IDX_STOCKS)` and passes the result straight to each screener's `*_score()` function — it never calls `generate_trade_signal` (find this function; if it doesn't exist or isn't wired in, that's the bug) to backfill the indicator fields.
+
+**Impact:** whenever the bulk intraday path succeeds (the normal case), every indicator-based scoring criterion (Price>MA5, Price>MA20, MA20>MA50, Volume>1.5×/2×/1.8×MA20, RSI, MACD, VWAP, Bandar A/D) silently falls into the "missing data → ~50% partial credit" branch in `filter_engine.py`, for effectively every stock. This guts the actual signal quality of ARA Hunter, BSJP, Big Accumulation, and Scalper Pro — they're mostly running on price/volume/value gates alone.
+
+**Fix:** After `get_market_snapshot()` returns, compute the missing indicators for each stock using rolling historical data (via `get_stock_data()` + `compute_indicators()`, or an equivalent lighter-weight calculation that doesn't require a full new API call per ticker) before passing snapshots into any `*_score()` function. Confirm indicator fields are populated (not None) for the large majority of tickers before scoring runs. This is the highest-impact fix in this whole audit — do this first.
+
+---
+
+## 🔴 CRITICAL #2 — Bandarmology ("broker_analyzer.py") is fabricated with `random.Random`
+
+`estimate_broker_signal()` in `bot/bandarmology/broker_analyzer.py` generates fake per-broker flows using `random.Random(seed)`, seeded from `hash(ticker)` and `pct_chg`, with a hardcoded bullish bias. It outputs labels like "AK+BK Accumulation" — indistinguishable in the UI from real IDX broker summary data — but it's pure randomness.
+
+This is called in `screener_engine.py` for every stock and shown to the user as `broker_signal` / `broker_detail`.
+
+**Fix — pick one:**
+- **Option A (preferred):** Replace with a real data source for broker flow (IDX broker summary, Stockbit public data, or a paid provider).
+- **Option B (if no real data source is feasible right now):** Stop presenting this as broker-specific data. Remove the specific broker codes (AK, BK, etc.) and relabel the output as a generic "Technical Momentum Bias" — do not imply it's real per-broker flow.
+
+Note: `bandar_score` (used as an actual scoring criterion in Big Accumulation/BSJP/Scalper Pro) is a *different* and legitimate field — it's a real CLV-based (Close Location Value) accumulation/distribution calculation in `data_service.py`, not from this random simulator. Don't confuse the two; only `broker_analyzer.py`'s output needs fixing here.
+
+---
+
+## 🔴 CRITICAL #3 — "Foreign Flow" is just relabeled price change
+
+In `screener_engine.py`:
+```python
+"foreign_flow": "Positive" if stock.get("pct_chg", 0) > 1 else "Neutral",
+```
+And in `bsjp.py`, the "Foreign Buy Streak ≥ 2" spec criterion is approximated as `pct_chg > 1.5 and rel_vol >= 1.5` — again just price+volume, not actual foreign investor data.
+
+**Fix:** Source real foreign buy/sell data if feasible (IDX publishes daily foreign flow data), or clearly rename/relabel these fields so they're not presented as foreign investor activity when they're actually price/volume momentum restated.
+
+---
+
+## 🔴 CRITICAL #4 — The proper spec output functions are never called
+
+`ara_hunter_output()`, `bsjp_output()`, and `big_accumulation_output()` in their respective files compute the documented spec output (Entry/TP/SL, Risk Level, Institutional Score, Bandar Strength, Breakout Readiness, Trend Quality, etc.) — but `screener_engine.py`'s `_get_score_fn()` only imports the `*_score()` gate functions. `run_screener()` then builds its own generic `momentum_score`/`volume_score` via `_momentum_score()`/`_scalp_score()` instead of calling the matching `*_output()` function.
+
+**Fix:** In `screener_engine.py`, for each screener type, call the matching `*_output()` function and merge its fields (entry_low, entry_high, tp, sl, rr, risk_level, and the screener-specific quality labels) into the `enriched` dict. Check `bot/handlers/callback_handlers.py`'s `format_screener_results()` to confirm it actually displays these fields once available.
+
+---
+
+## 🟠 HIGH PRIORITY
+
+**5. Missing-data still gives free ~50% credit even after fixing #1.**
+In `filter_engine.py`, any criterion with missing data defaults to `max_score += X; score += X/2`. Once indicators are properly populated (fix #1), this becomes a smaller issue, but as a safety net: add a `data_completeness` field to output, and don't let a stock reach "pass" status if more than ~20% of its criteria were scored on missing data.
+
+**6. Frequency (transaction count) filter is still absent** from all 4 screeners — yfinance doesn't provide it. Either find an alternative data source/proxy, or explicitly document this as a known limitation.
+
+**7. Broadcast functions in `bot/main.py` scan a partial universe.**
+`market_open_broadcast` uses `ALL_IDX_STOCKS[:40]` and `market_close_broadcast` uses `ALL_IDX_STOCKS[:60]` — only the first N tickers, not ranked by liquidity. This silently excludes real top movers from the "Top Movers at Open" / "Top Gainers/Losers at Close" messages. Fix: scan the full universe (or at least all liquid stocks), rank, then slice to top N for display.
+(Note: `run_screener()` itself, used by `/ara /bsjp /bigacc /scalp`, already correctly scans the full `ALL_IDX_STOCKS` universe — this issue only affects the two scheduled broadcasts.)
+
+---
+
+## 🟡 MEDIUM PRIORITY
+
+**8. Two parallel signal systems may have inconsistent criteria.** On-demand commands use `screener_engine.py`; background jobs (every 5 min) use `bot/alerts/scanner.py` (`top_gainer_scan`, `golden_cross_scan`, `top_scalping_scan`). Check whether equivalent signals (e.g. scalping) use the same thresholds in both places. If they diverge, a user can get a "pass" from `/scalp` while the background scanner stays silent for the same stock, or vice versa. Unify into one shared source of criteria if they differ.
+
+**9. Watchlist alert trigger is oversimplified.** In `bot/main.py`, `watchlist_alert_job` triggers on `rel_vol > 2.5x OR pct_chg > 3%` alone, with no minimum transaction value floor — prone to false alerts on illiquid stocks. Add a minimum value filter (e.g. > Rp 1B).
+
+**10. "Continuation probability" fields are arbitrary formulas presented as calibrated probabilities** (e.g. `45 + pct_chg*4.5 + (rel_vol-1)*8`). Either backtest/calibrate against real historical IDX data, or relabel as a qualitative score rather than a "probability."
+
+**11. Stock universe size** — confirm how many tickers are in `ALL_IDX_STOCKS` (`bot/utils/constants.py`) and whether it reasonably covers actively-traded IDX stocks, since a too-narrow universe limits how many real opportunities the screeners can ever find.
+
+---
+
+## Deliverable
+- Fix items 1–4 directly — they're the ones materially undermining signal trustworthiness.
+- Fix items 5–9 where straightforward; for anything requiring a new data source/API, report findings and recommended options instead of guessing.
+- Item 10–11: report findings, fix if low-risk.
+- Per-file changelog at the end: what changed, why, and which of the above items it addresses.
+- Keep the bot runnable — don't break the GitHub Actions workflow, existing Telegram message formats, or signal output structure beyond what's needed to add the fixed fields.

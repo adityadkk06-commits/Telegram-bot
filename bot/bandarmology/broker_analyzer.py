@@ -1,134 +1,106 @@
 """
-Broker/Bandarology analyzer.
-Since IDX real broker data requires a paid API, we simulate broker
-accumulation signals from price/volume/momentum patterns.
+Technical Momentum Analyzer.
+
+IMPORTANT: IDX real-time per-broker flow data (e.g. AK, BK, YP net buy/sell)
+requires a paid IDX data provider and is NOT available via yfinance.
+
+This module produces a Technical Momentum Bias derived entirely from real,
+computable price/volume indicators:
+  - BandarScore:  CLV-based Acc/Dist momentum (real, from data_service.py)
+  - RelVol:       volume vs 20-day average (real)
+  - pct_chg:      current day's return (real)
+  - MA alignment: short > long trend confirmation (real)
+
+No simulated broker flows. No random numbers.
 """
-import random
 import math
-from bot.utils.constants import FOCUS_BROKERS
 
 
 def estimate_broker_signal(stock: dict) -> dict:
-    price = stock.get("price", 0)
-    prev_price = stock.get("prev_price", price)
-    pct_chg = stock.get("pct_chg", 0)
-    rel_vol = stock.get("rel_vol", 1) or 1
-    bandar_score = stock.get("bandar_score", 0) or 0
-    ma20 = stock.get("ma20")
-    ma50 = stock.get("ma50")
-    value = stock.get("value", 0) or 0
+    """
+    Returns a Technical Momentum Bias dict derived from real indicators.
+    Does NOT simulate per-broker flows.
+    """
+    pct_chg     = stock.get("pct_chg", 0) or 0
+    rel_vol     = stock.get("rel_vol", 1) or 1
+    bandar_sc   = stock.get("bandar_score", 0) or 0
+    ma20        = stock.get("ma20")
+    ma50        = stock.get("ma50")
+    value       = stock.get("value", 0) or 0
 
-    # Simulate individual broker flows
-    seed = hash(stock.get("ticker", "")) % 1000
-    rng = random.Random(seed + int(pct_chg * 100))
+    # ── Scoring: 0 = max bearish, 100 = max bullish ──────────────────────────
+    bias = 50.0   # neutral baseline
 
-    brokers = {}
-    total_buy = 0
-    total_sell = 0
+    # 1. BandarScore (CLV-based Acc/Dist 5-period momentum)
+    #    Positive = net accumulation, negative = net distribution
+    if bandar_sc > 50:     bias += 18
+    elif bandar_sc > 20:   bias += 12
+    elif bandar_sc > 5:    bias +=  6
+    elif bandar_sc < -20:  bias -= 12
+    elif bandar_sc < -5:   bias -=  6
 
-    for broker in FOCUS_BROKERS:
-        # Bias toward accumulation if indicators are bullish
-        bullish_bias = 0.0
-        if pct_chg > 2:
-            bullish_bias += 0.3
-        if rel_vol > 2:
-            bullish_bias += 0.2
-        if bandar_score > 20:
-            bullish_bias += 0.2
-        if ma20 and ma50 and ma20 > ma50:
-            bullish_bias += 0.1
+    # 2. Price momentum
+    if pct_chg > 3:     bias += 12
+    elif pct_chg > 1:   bias +=  7
+    elif pct_chg > 0:   bias +=  3
+    elif pct_chg < -2:  bias -= 10
+    elif pct_chg < 0:   bias -=  3
 
-        # AK and BK are primary bandar brokers
-        if broker in ("AK", "BK"):
-            bullish_bias += 0.2
+    # 3. Relative volume (accumulation of large orders pushes RelVol up)
+    if rel_vol >= 3:     bias += 10
+    elif rel_vol >= 2:   bias +=  6
+    elif rel_vol >= 1.5: bias +=  3
+    elif rel_vol < 0.8:  bias -=  4
 
-        flow_pct = rng.uniform(-1, 1) + bullish_bias
-        flow_value = flow_pct * (value * rng.uniform(0.05, 0.25))
+    # 4. MA trend alignment
+    if ma20 and ma50:
+        if ma20 > ma50:   bias += 6
+        elif ma20 < ma50: bias -= 4
 
-        brokers[broker] = {
-            "flow": flow_value,
-            "net_buy" if flow_value > 0 else "net_sell": abs(flow_value),
-        }
-        if flow_value > 0:
-            total_buy += flow_value
-        else:
-            total_sell += abs(flow_value)
+    bias = max(0.0, min(100.0, bias))
 
-    # Overall signal
-    net = total_buy - total_sell
-    net_ratio = net / (total_buy + total_sell + 1)
-
-    if net_ratio > 0.4:
+    # ── Signal label ─────────────────────────────────────────────────────────
+    if bias >= 72:
         signal = "Strong Accumulation"
-    elif net_ratio > 0.15:
+    elif bias >= 58:
         signal = "Accumulation"
-    elif net_ratio < -0.4:
+    elif bias <= 28:
         signal = "Strong Distribution"
-    elif net_ratio < -0.15:
+    elif bias <= 42:
         signal = "Distribution"
     else:
         signal = "Neutral"
 
-    # AK/BK specific
-    ak_flow = brokers.get("AK", {}).get("flow", 0)
-    bk_flow = brokers.get("BK", {}).get("flow", 0)
-
-    if ak_flow > 0 and bk_flow > 0:
-        bandar_label = "AK+BK Accumulation"
-    elif ak_flow > 0:
-        bandar_label = "AK Accumulation"
-    elif bk_flow > 0:
-        bandar_label = "BK Accumulation"
-    elif ak_flow < 0 and bk_flow < 0:
-        bandar_label = "AK+BK Distribution"
-    else:
-        bandar_label = signal
-
     return {
-        "signal": signal,
-        "bandar_label": bandar_label,
-        "brokers": brokers,
-        "net_buy": total_buy,
-        "net_sell": total_sell,
-        "net_ratio": net_ratio,
+        "signal":       signal,
+        "bias_score":   round(bias, 1),
+        "bandar_score": round(bandar_sc, 2),
+        "rel_vol":      round(rel_vol, 2),
+        "data_source":  "technical_indicators",
     }
 
 
 def format_broker_report(ticker: str, broker_data: dict) -> str:
-    brokers = broker_data.get("brokers", {})
-    signal = broker_data.get("signal", "Neutral")
-    bandar_label = broker_data.get("bandar_label", "Neutral")
-    net_buy = broker_data.get("net_buy", 0)
-    net_sell = broker_data.get("net_sell", 0)
+    signal      = broker_data.get("signal", "Neutral")
+    bias        = broker_data.get("bias_score", 50.0)
+    bandar_sc   = broker_data.get("bandar_score", 0.0)
+    rel_vol     = broker_data.get("rel_vol", 1.0)
+
+    signal_emoji = "🟢" if "Accumulation" in signal else ("🔴" if "Distribution" in signal else "⚪")
+    bar_filled   = int(bias / 10)
+    bar          = "█" * bar_filled + "░" * (10 - bar_filled)
 
     lines = [
-        f"🏦 *Broker Analysis: {ticker}*",
+        f"📊 *Technical Momentum: {ticker}*",
         "",
-        "*Focus Brokers (Estimated):*",
+        f"*Signal:* {signal_emoji} {signal}",
+        f"*Bias Score:* {bias:.0f}/100  [{bar}]",
+        "",
+        "*Indicator Breakdown:*",
+        f"  • BandarScore (Acc/Dist): `{bandar_sc:+.1f}`",
+        f"  • Relative Volume:       `{rel_vol:.2f}×`",
+        "",
+        "⚠️ _Technical bias only — no real per-broker IDX flow data._",
+        "_Real AK/BK/YP broker data requires a paid IDX data provider._",
     ]
-
-    for broker, data in brokers.items():
-        flow = data.get("flow", 0)
-        abs_flow = abs(flow)
-        if abs_flow >= 1_000_000_000:
-            flow_str = f"{abs_flow/1_000_000_000:.1f}B"
-        elif abs_flow >= 1_000_000:
-            flow_str = f"{abs_flow/1_000_000:.0f}M"
-        else:
-            flow_str = f"{abs_flow/1_000:.0f}K"
-
-        arrow = "📈 +" if flow > 0 else "📉 -"
-        lines.append(f"  *{broker}:* {arrow}{flow_str} {'accumulation' if flow > 0 else 'distribution'}")
-
-    lines += [
-        "",
-        f"*Net Buy:* {net_buy/1e9:.2f}B | *Net Sell:* {net_sell/1e9:.2f}B",
-        "",
-        f"*Conclusion:* {bandar_label}",
-        f"*Signal:* {'🟢' if 'Accumulation' in signal else '🔴' if 'Distribution' in signal else '⚪'} {signal}",
-        "",
-        "⚠️ _Broker flows are estimated from price/volume patterns._",
-        "_Real broker data requires a paid IDX data provider._",
-    ]
-
     return "\n".join(lines)

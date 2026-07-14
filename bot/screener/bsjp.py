@@ -9,7 +9,7 @@ Original rules:
   Price  > 1.01 × prev_price
   Price  >= MA5
   Volume > 2 × VolMA20
-  (Net foreign buy streak ≥2 — approximated)
+  (Net foreign buy streak ≥2 — approximated as price+volume momentum)
 """
 from bot.screener.filter_engine import FilterResult
 
@@ -46,7 +46,7 @@ def bsjp_score(stock: dict) -> FilterResult:
               vol_prev_ratio >= 0.85,
               f"vol {vol_prev_ratio:.2f}× prev (need ≥1.20)")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("Vol>1.2×prev", 14)
 
     # 3. Price > MA20  (14 pts) — near: within -2%
     if ma20:
@@ -56,7 +56,7 @@ def bsjp_score(stock: dict) -> FilterResult:
               price >= ma20 * 0.98,
               f"{abs(gap):.1f}% below MA20 ({ma20:,.0f})")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("Price>MA20", 14)
 
     # 4. MA20 > MA50  (14 pts) — near: within -2%
     if ma20 and ma50:
@@ -66,7 +66,7 @@ def bsjp_score(stock: dict) -> FilterResult:
               ma20 >= ma50 * 0.98,
               f"MA20 is {abs(gap):.1f}% {'above' if gap>=0 else 'below'} MA50")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("MA20>MA50", 14)
 
     # 5. Price > 1.01× prev  (10 pts) — near: >1.002
     r.add("Gain>1%", 10, 5,
@@ -82,7 +82,7 @@ def bsjp_score(stock: dict) -> FilterResult:
               price >= ma5 * 0.99,
               f"{abs(gap):.1f}% below MA5 ({ma5:,.0f})")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("Price≥MA5", 14)
 
     # 7. Volume > 2× VolMA20  (14 pts) — near: >1.2
     if vol_ma20:
@@ -91,16 +91,59 @@ def bsjp_score(stock: dict) -> FilterResult:
               rel_vol >= 1.2,
               f"RelVol {rel_vol:.2f}× (need ≥2.0)")
     else:
-        r.max_score += 14; r.score += 7
+        r.add_missing("Vol>2×MA20", 14)
 
-    # 8. Foreign buy proxy: positive pct + rising volume (6 pts)
-    foreign_signal = pct_chg > 0.5 and rel_vol > 1.2
-    r.add("ForeignBuy", 6, 3,
-          foreign_signal,
+    # 8. Price+Vol momentum proxy (replaces foreign buy, labelled honestly)
+    momentum_signal = pct_chg > 0.5 and rel_vol > 1.2
+    r.add("Momentum+Vol", 6, 3,
+          momentum_signal,
           pct_chg > 0,
-          "no foreign buy signal")
+          "no positive price+volume momentum")
 
     return r.finalise()
+
+
+def bsjp_output(stock: dict) -> dict:
+    """
+    Trade setup for a BSJP breakout candidate.
+    Entry near current price, TP using 2.5×/5× ATR proxy, SL below MA5.
+    """
+    price  = stock.get("price") or 0
+    ma5    = stock.get("ma5") or price * 0.98
+    ma20   = stock.get("ma20") or price * 0.96
+    high   = stock.get("high") or price
+    low    = stock.get("low") or price
+    if not price:
+        return {}
+
+    # ATR proxy: today's high-low range
+    atr_proxy = max(high - low, price * 0.01)
+
+    entry_low  = round(price * 1.000, 0)
+    entry_high = round(price * 1.008, 0)
+    tp1        = round(price + 2.5 * atr_proxy, 0)
+    tp2        = round(price + 5.0 * atr_proxy, 0)
+    sl         = round(min(ma5 * 0.995, price * 0.970), 0)
+    rr         = round((tp1 - price) / max(price - sl, 1), 2)
+
+    # Trend quality: how far MA20 is above MA50
+    ma50       = stock.get("ma50") or ma20
+    trend_gap  = ((ma20 - ma50) / ma50 * 100) if ma50 else 0
+    if trend_gap > 3:   trend_quality = "Strong Uptrend"
+    elif trend_gap > 0: trend_quality = "Mild Uptrend"
+    elif trend_gap > -2:trend_quality = "Flat / Consolidating"
+    else:               trend_quality = "Downtrend"
+
+    return {
+        "entry_low":     entry_low,
+        "entry_high":    entry_high,
+        "tp1":           tp1,
+        "tp2":           tp2,
+        "sl":            sl,
+        "rr":            rr,
+        "risk_level":    "Medium",
+        "trend_quality": trend_quality,
+    }
 
 
 def bsjp_filter(stock: dict) -> bool:

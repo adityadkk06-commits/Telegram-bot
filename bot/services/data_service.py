@@ -175,8 +175,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_Hist"]   = df["MACD"] - df["MACD_Signal"]
 
-    # VWAP (20-bar rolling)
-    df["VWAP"] = (close * volume).rolling(20).sum() / volume.rolling(20).sum()
+    # VWAP (20-bar rolling) — uses Typical Price (H+L+C)/3, not Close alone
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    df["VWAP"] = (tp * volume).rolling(20).sum() / volume.rolling(20).sum()
 
     # Relative Volume
     df["RelVol"] = volume / df["VolMA20"].replace(0, np.nan)
@@ -209,7 +210,7 @@ def get_market_snapshot(tickers: list, _context: str = "") -> list[dict]:
 
     for ticker in tickers:
         try:
-            df = get_stock_data(ticker, period="5d")
+            df = get_stock_data(ticker, period="3mo")
             if df is None or len(df) < 2:
                 failed.append(ticker)
                 continue

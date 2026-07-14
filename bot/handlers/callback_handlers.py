@@ -109,12 +109,25 @@ def format_screener_results(results: dict, name: str, screener_type: str) -> tup
             pct    = s.get("pct_chg", 0)
             mom    = s.get("momentum_score", 50)
             sector = s.get("sector", "")
-            broker = s.get("broker_signal", "")
             fpct   = s.get("filter_pct", 100)
             sign   = "+" if pct >= 0 else ""
+            tp1    = s.get("tp1")
+            sl     = s.get("sl")
+            rr     = s.get("rr")
+            risk   = s.get("risk_level", "")
+            dc     = s.get("data_completeness", 1.0)
+            dc_str = f" | Data: {dc*100:.0f}%" if dc < 1.0 else ""
+            setup_str = ""
+            if tp1 and sl:
+                setup_str = f"\n   📊 TP1: {fmt_price(tp1)} | SL: {fmt_price(sl)}"
+                if rr:
+                    setup_str += f" | RR: {rr:.1f}×"
+                if risk:
+                    setup_str += f" | {risk} Risk"
             lines.append(
                 f"{i}. *{ticker}* {fmt_price(s.get('price'))} {sign}{pct:.2f}%\n"
-                f"   {score_emoji(mom)} Score:{mom:.0f} | {fpct:.0f}% match | {sector}"
+                f"   {score_emoji(mom)} Score:{mom:.0f} | {fpct:.0f}% match | {sector}{dc_str}"
+                f"{setup_str}"
             )
     else:
         lines.append("✅ *No full matches today.*")

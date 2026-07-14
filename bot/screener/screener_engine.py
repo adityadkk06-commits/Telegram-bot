@@ -1,5 +1,13 @@
 """
 Screener engine — collects full matches AND near-miss candidates.
+
+Changes vs original:
+- Calls *_output() for each screener type and merges trade setup fields
+  (entry_low, entry_high, tp1, tp2, sl, rr, risk_level, screener-specific)
+- Renames foreign_flow → momentum_proxy (was a pure price heuristic, not
+  real foreign investor data)
+- Passes data_completeness from FilterResult into enriched dict
+- Broker signal now uses technical momentum bias (no random simulation)
 """
 import logging
 from bot.services.data_service import get_market_snapshot
@@ -9,8 +17,9 @@ from bot.utils.constants import IDX_STOCKS, ALL_IDX_STOCKS
 
 logger = logging.getLogger(__name__)
 
-# Score functions per screener
-_SCORE_FN = {}
+# Score + output functions per screener
+_SCORE_FN  = {}
+_OUTPUT_FN = {}
 
 
 def _get_score_fn(screener_type: str):
@@ -29,6 +38,24 @@ def _get_score_fn(screener_type: str):
             from bot.screener.scalper_pro import scalper_pro_score
             _SCORE_FN[screener_type] = scalper_pro_score
     return _SCORE_FN.get(screener_type)
+
+
+def _get_output_fn(screener_type: str):
+    """Lazy-load and cache output functions."""
+    if screener_type not in _OUTPUT_FN:
+        if screener_type == "ara_hunter":
+            from bot.screener.ara_hunter import ara_hunter_output
+            _OUTPUT_FN[screener_type] = ara_hunter_output
+        elif screener_type == "bsjp":
+            from bot.screener.bsjp import bsjp_output
+            _OUTPUT_FN[screener_type] = bsjp_output
+        elif screener_type == "big_accumulation":
+            from bot.screener.big_accumulation import big_accumulation_output
+            _OUTPUT_FN[screener_type] = big_accumulation_output
+        elif screener_type == "scalper_pro":
+            from bot.screener.scalper_pro import scalper_pro_output
+            _OUTPUT_FN[screener_type] = scalper_pro_output
+    return _OUTPUT_FN.get(screener_type)
 
 
 def _get_sector(ticker: str) -> str:
@@ -120,6 +147,20 @@ def _vol_score(stock: dict) -> float:
     return 25
 
 
+def _momentum_proxy_label(stock: dict) -> str:
+    """
+    A price+volume momentum label.
+    NOTE: This is NOT foreign investor data. Real IDX foreign flow requires
+    the IDX RDI registry or a broker data feed.
+    """
+    pct  = stock.get("pct_chg", 0)
+    rv   = stock.get("rel_vol", 1) or 1
+    if pct > 2 and rv > 1.5:   return "Rising (price+vol)"
+    if pct > 0:                 return "Mild Rise"
+    if pct < -2:                return "Falling"
+    return "Flat"
+
+
 def run_screener(
     screener_type: str,
     max_pass: int = 8,
@@ -134,9 +175,13 @@ def run_screener(
     Each item has all stock fields PLUS:
       filter_result, filter_pct, status, sector,
       broker_signal, broker_detail, momentum_score, volume_score,
-      foreign_flow, ai_analysis, near_summary
+      momentum_proxy, data_completeness,
+      entry_low, entry_high, tp1, tp2, sl, rr, risk_level,
+      (plus screener-specific quality labels from *_output()),
+      ai_analysis, near_summary
     """
-    score_fn = _get_score_fn(screener_type)
+    score_fn  = _get_score_fn(screener_type)
+    output_fn = _get_output_fn(screener_type)
     if not score_fn:
         return {"pass": [], "near": []}
 
@@ -150,25 +195,42 @@ def run_screener(
             if result.status == "fail":
                 continue
 
-            broker = estimate_broker_signal(stock)
-            is_scalp = screener_type == "scalper_pro"
-            mom_sc = _scalp_score(stock) if is_scalp else _momentum_score(stock)
-            vol_sc = _vol_score(stock)
-            sector = _get_sector(stock["ticker"])
+            broker    = estimate_broker_signal(stock)
+            is_scalp  = screener_type == "scalper_pro"
+            mom_sc    = _scalp_score(stock) if is_scalp else _momentum_score(stock)
+            vol_sc    = _vol_score(stock)
+            sector    = _get_sector(stock["ticker"])
+
+            # Trade setup from screener-specific output function
+            setup = output_fn(stock) if output_fn else {}
 
             enriched = {
                 **stock,
-                "filter_result":  result,
-                "filter_pct":     result.pct,
-                "status":         result.status,
-                "sector":         sector,
-                "broker_signal":  broker["signal"],
-                "broker_detail":  broker,
-                "momentum_score": mom_sc,
-                "volume_score":   vol_sc,
-                "foreign_flow":   "Positive" if stock.get("pct_chg", 0) > 1 else "Neutral",
-                "near_summary":   result.near_summary(3),
+                "filter_result":     result,
+                "filter_pct":        result.pct,
+                "status":            result.status,
+                "sector":            sector,
+                "broker_signal":     broker["signal"],
+                "broker_detail":     broker,
+                "momentum_score":    mom_sc,
+                "volume_score":      vol_sc,
+                "momentum_proxy":    _momentum_proxy_label(stock),
+                "data_completeness": result.data_completeness,
+                "near_summary":      result.near_summary(3),
+                # Trade setup fields (from *_output())
+                "entry_low":         setup.get("entry_low"),
+                "entry_high":        setup.get("entry_high"),
+                "tp1":               setup.get("tp1"),
+                "tp2":               setup.get("tp2"),
+                "sl":                setup.get("sl"),
+                "rr":                setup.get("rr"),
+                "risk_level":        setup.get("risk_level", "Medium"),
             }
+            # Merge any screener-specific extra fields (e.g. trend_quality, ara_limit)
+            for k, v in setup.items():
+                if k not in enriched:
+                    enriched[k] = v
+
             enriched["ai_analysis"] = generate_full_analysis(enriched, screener_type)
 
             if result.status == "pass":
