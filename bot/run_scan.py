@@ -1,7 +1,8 @@
 """
 One-shot IDX Market Scanner — GitHub Actions mode.
 
-Runs the full market scan (Top Gainers, Golden Cross, Top Scalping),
+Runs the full market scan (Top Gainers, Golden Cross, Top Scalping,
+ARA Hunter, BSJP, Big Accumulation, Scalper Pro),
 generates trade signals, sends results directly to Telegram, then exits.
 
 Usage:
@@ -24,6 +25,7 @@ import requests
 
 from bot.services.data_service import get_market_snapshot, get_stock_data, compute_indicators
 from bot.alerts.signal_engine import generate_trade_signal, format_signal_message
+from bot.screener.screener_engine import run_screener
 from bot.utils.constants import ALL_IDX_STOCKS
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +45,14 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT  = os.environ.get("TELEGRAM_CHAT_ID",   "").strip()
 
 SEP = "━" * 29
+
+# Dedicated screeners that should participate in every unattended scan cycle.
+SCREENER_JOBS = [
+    ("ara_hunter", "ara_hunter", 2),
+    ("bsjp", "bsjp", 2),
+    ("big_accumulation", "big_accumulation", 2),
+    ("scalper_pro", "scalper_pro", 2),
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Telegram delivery (direct REST — no polling, no bot instance)
@@ -161,6 +171,25 @@ def _scan_golden_cross(snapshots: list) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dedicated screener jobs
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_dedicated_screeners() -> list:
+    """Return full-match results from the four dedicated screeners."""
+    out = []
+    for screener_type, alert_type, max_pass in SCREENER_JOBS:
+        try:
+            result = run_screener(screener_type, max_pass=max_pass, max_near=0)
+            hits = result.get("pass", [])
+            logger.info(f"  {screener_type:17s}: {len(hits)} found")
+            for snap in hits:
+                out.append((snap, alert_type))
+        except Exception as e:
+            logger.warning(f"  {screener_type} screener error: {e}")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Main one-shot entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -223,13 +252,17 @@ def run_scan() -> int:
     gc_hits  = _scan_golden_cross(snapshots)
     logger.info(f"  Golden Cross  : {len(gc_hits)} found")
 
-    # Collect unique candidates (scalpers first — highest priority)
+    logger.info("  Running dedicated screeners (ARA Hunter / BSJP / Big Acc / Scalper Pro)…")
+    dedicated_hits = _run_dedicated_screeners()
+
+    # Collect unique candidates, prioritising dedicated screeners and scalpers.
     seen       = set()
     candidates = []
     for snap, alert_type in (
+        dedicated_hits +
         [(s, "top_scalping") for s in scalpers] +
-        [(s, "golden_cross") for s in gc_hits]  +
-        [(s, "gainer")       for s in gainers]
+        [(s, "golden_cross") for s in gc_hits] +
+        [(s, "gainer") for s in gainers]
     ):
         t = snap.get("ticker")
         if t and t not in seen:
@@ -271,7 +304,7 @@ def run_scan() -> int:
         logger.warning("  ❌ Banner failed — check CHAT_ID format and bot membership")
     time.sleep(0.5)
 
-    for snap, sig, alert_type in signals[:8]:
+    for snap, sig, alert_type in signals[:12]:
         ticker = snap.get("ticker", "?")
         pct    = snap.get("pct_chg", 0)
         text   = format_signal_message(sig, pct, alert_type)

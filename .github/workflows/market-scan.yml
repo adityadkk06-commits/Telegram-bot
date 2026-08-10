@@ -7,7 +7,8 @@ name: IDX Market Scan
 #  No always-on server required. Each run:
 #    1. Installs Python deps
 #    2. Fetches live IDX snapshots (via yfinance)
-#    3. Runs Top Gainers + Top Scalping + Golden Cross scanners
+#    3. Runs 7 scanners: Top Gainers, Top Scalping, Golden Cross,
+#       ARA Hunter, BSJP, Big Accumulation, and Scalper Pro
 #    4. Generates trade signals (11-factor engine)
 #    5. Sends alerts directly to Telegram
 #    6. Exits cleanly

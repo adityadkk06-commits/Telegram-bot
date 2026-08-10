@@ -302,14 +302,16 @@ def format_signal_message(sig: dict, pct_chg: float = 0,
     bar    = "█" * filled + "░" * (10 - filled)
 
     # Alert type header
-    if alert_type == "golden_cross":
-        header = "✨ GOLDEN CROSS ALERT"
-    elif alert_type == "price_alert":
-        header = "🔔 PRICE ALERT TRIGGERED"
-    elif alert_type == "top_scalping":
-        header = "⚡ TOP SCALPING ALERT"
-    else:
-        header = "🔥 TOP GAINER ALERT"
+    header = {
+        "golden_cross": "✨ GOLDEN CROSS ALERT",
+        "price_alert": "🔔 PRICE ALERT TRIGGERED",
+        "top_scalping": "⚡ TOP SCALPING ALERT",
+        "ara_hunter": "🎯 ARA HUNTER ALERT",
+        "bsjp": "🌅 BSJP ALERT",
+        "big_accumulation": "🐘 BIG ACCUMULATION ALERT",
+        "scalper_pro": "🚀 SCALPER PRO ALERT",
+        "gainer": "🔥 TOP GAINER ALERT",
+    }.get(alert_type, "🔥 TOP GAINER ALERT")
 
     analysis_block = "\n".join(signals[:6]) if signals else "📊 Analyzing…"
 
@@ -334,6 +336,7 @@ def format_signal_message(sig: dict, pct_chg: float = 0,
         f"*Status:*\n{status}\n"
         f"Scalp Prob : {'█'*round(scalp/10)}{'░'*(10-round(scalp/10))} {scalp}%\n"
         f"{_SEP}\n"
+        f"_🏦 Broker flow is simulated from price/volume (no paid data feed)._\n"
         f"_⚠️ Not financial advice. Always manage risk._"
     )
 
